@@ -1,0 +1,29 @@
+@startuml
+skinparam backgroundColor #EEEBDC
+
+participant "User" as User
+participant "Publisher" as Pub
+participant "Certificate Ledger (IC)" as IC
+participant "Event Hub (IC)" as Hub
+participant "aVa Reputation" as aVa
+
+aVa -->Hub: subscribe to the 'creation' event
+Pub --> IC: deploy ICRC7 token ledger canister
+User --> Pub: fihish course
+
+Pub --> IC: 'create certificate' request
+
+IC --> Hub: emit 'creation' event
+Hub --> Hub: generate notifications for an event
+Hub --> aVa: send 'creation' event message
+aVa --> aVa: create doctoken from certificate's JSON
+
+aVa --> aVa: create account
+aVa --> aVa: add reputation based on Publisher's reputation and doctoken
+aVa --> IC: user reputation balance 
+
+IC --> Pub: certificate and reputation balance
+
+User <-- Pub: certificate with reputation
+
+@enduml
