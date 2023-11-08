@@ -1,0 +1,40 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "EntityCollection",
+    "type": "object",
+    "properties": {
+      "entity": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "integer" },
+            "publisher": { "type": "string" },
+            "type": { "type": "string" },
+            "attributes": {
+              "type": "object",
+              "properties": {
+                "internal_number": { "type": "string" },
+                "name": { "type": "string" },
+                "content": { "type": "string" },
+                "format": { "type": "string" },
+                "message_body": { "type": "string" },
+                "message_subject": { "type": "string" },
+                "created_at": { "type": "string", "format": "date-time" },
+                "updated_at": { "type": "string", "format": "date-time" },
+                "expire_at": { "type": "string", "format": "date-time" }
+              },
+              "required": ["name", "created_at"],
+              "patternProperties": {
+                "^[a-zA-Z0-9_]+$": { "type": "string" }
+              },
+              "additionalProperties": true
+            }
+          },
+          "required": ["id", "publisher", "type", "attributes"]
+        }
+      }
+    },
+    "required": ["entity"]
+  }
+  

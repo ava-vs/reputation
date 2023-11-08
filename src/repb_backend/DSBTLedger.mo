@@ -11,7 +11,7 @@ import Time "mo:base/Time";
 
 // ICRC7 version
 
-actor class Ledger(init : { initial_mints : [{ account : { owner : Principal; subaccount : ?Blob }; amount : Nat }]; minting_account : { owner : Principal; subaccount : ?Blob }; token_name : Text; token_symbol : Text; decimals : Nat8; transfer_fee : Nat }) = this {
+actor class DSBTLedger(init : { initial_mints : [{ account : { owner : Principal; subaccount : ?Blob }; amount : Nat }]; minting_account : { owner : Principal; subaccount : ?Blob }; token_name : Text; token_symbol : Text; decimals : Nat8; transfer_fee : Nat }) = this {
 
     public type Account = { owner : Principal; subaccount : ?Subaccount };
     public type Subaccount = Blob;
@@ -303,7 +303,7 @@ actor class Ledger(init : { initial_mints : [{ account : { owner : Principal; su
     stable var persistedLog : [Transaction] = [];
 
     system func preupgrade() {
-        persistedLog := log.toArray();
+        persistedLog := Buffer.toArray(log);
     };
 
     system func postupgrade() {
@@ -389,6 +389,9 @@ actor class Ledger(init : { initial_mints : [{ account : { owner : Principal; su
         x;
     };
 
+/*
+It's Soulbound Token - no transfer, only burn
+*/
     public shared ({ caller }) func icrc7_transfer({
         from_subaccount : ?Subaccount;
         to : Account;
@@ -458,10 +461,10 @@ actor class Ledger(init : { initial_mints : [{ account : { owner : Principal; su
             {
                 name = "ICRC-7";
                 url = "https://github.com/dfinity/ICRC-1/tree/main/standards/ICRC-7";
-            // },
-            // {
-            //     name = "ICRC-3";
-            //     url = "https://github.com/dfinity/ICRC-1/tree/main/standards/ICRC-3";
+            },
+            {
+                name = "ICRC-DSBT";
+                url = "https://github.com/ava-vs";
             },
         ];
     };

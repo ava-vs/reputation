@@ -1,14 +1,15 @@
-@startuml
+@startuml aVa Protocol
 skinparam backgroundColor #EEEBDC
 
 participant "User" as User
-participant "Publisher" as Pub
-participant "Certificate Ledger (IC)" as IC
+participant "On-line School" as Pub
+participant "Doctoken Ledger (IC)" as IC
 participant "Event Hub (IC)" as Hub
 participant "aVa Reputation" as aVa
 
 aVa -->Hub: subscribe to the 'creation' event
-Pub --> IC: deploy ICRC7 token ledger canister
+Pub --> IC: deploy Doctoken ledger canister
+IC --> aVa: register a new participant
 User --> Pub: fihish course
 
 Pub --> IC: 'create certificate' request
