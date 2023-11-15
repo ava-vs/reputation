@@ -5,43 +5,32 @@ import Nat "mo:base/Nat";
 import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 
+import E "./EventTypes";
+
 module {
-    // Определение типа для поля события
-    public type EventField = {
-        name : Text;
-        value : Blob;
+    public type EventField = E.EventField;
+
+    public type Event = E.Event;
+
+    public type EventFilter = {
+        eventType : ?E.EventName;
+        fieldFilters : [EventField];
     };
 
-    // Определение типа для события
-    public type Event = {
-        topics : [EventField];
-        values : [EventField];
-    };
-
-    // Определение типа для фильтра событий
-    public type EventFilter = [EventField];
-
-    // Определение типа для удаленного вызова
     public type RemoteCallEndpoint = {
         canisterId : Principal.Principal;
         methodName : Text;
     };
 
-    // Определение типа для пакета закодированных событий
     public type EncodedEventBatch = {
         content : Blob;
         eventsCount : Nat;
         timestamp : Int;
     };
 
-    public type Callback = {
-        filter : EventFilter;
+    public type Subscriber = {
         callback : Principal;
-        methodName : Text;
-    };
-
-    public type CreateEvent = actor {
-        creation : Event -> async Result.Result<[(Text, Text)], Text>;
+        filter : EventFilter;
     };
 
 };

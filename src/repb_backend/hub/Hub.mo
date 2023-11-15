@@ -7,8 +7,10 @@ import Order "mo:base/Order";
 import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
+import Iter "mo:base/Iter";
 
 import Types "./Types";
+import E "./EventTypes";
 
 actor class Hub() {
     type EventField = Types.EventField;
@@ -26,134 +28,108 @@ actor class Hub() {
         listeners : [RemoteCallEndpoint];
     };
 
-    type Callback = Types.Callback;
+    type Subscriber = Types.Subscriber;
 
-    type EventHub = {
-        var events : [Event];
-        var subscribers : [Callback];
-    };
+    type EventName = E.EventName;
 
-    type CreateEvent = Types.CreateEvent;
+    // type EventDAO = {
+    //     eventType : EventName;
+    //     topics : [EventField];
+    // };
 
-    var batchMakingDurationNano : Int = 1;
+    // For further batch handling
+    var batchMakingDurationNano : Int = 1_000_000_000;
     var batchMaxSizeBytes : Nat = 500_000;
+
     var listeners : [FilterListenersPair] = [];
 
-    stable let eventHub : EventHub = {
-        var events = [];
-        var subscribers = [];
+    var eventHub = {
+        var events : [E.Event] = [];
+        subscribers : HashMap.HashMap<Principal, Subscriber> = HashMap.HashMap<Principal, Subscriber>(10, Principal.equal, Principal.hash);
     };
 
-    func compareEventFields(field1 : EventField, field2 : EventField) : Order.Order {
-        if (field1.name < field2.name) {
-            return #less;
-        } else if (field1.name > field2.name) {
-            return #greater;
-        } else {
-            if (field1.value < field2.value) {
-                return #less;
-            } else if (field1.value > field2.value) {
-                return #greater;
-            } else {
-                return #equal;
-            };
-        };
+    // func compareEventFields(field1 : EventField, field2 : EventField) : Order.Order {
+    //     if (field1.name < field2.name) {
+    //         return #less;
+    //     } else if (field1.name > field2.name) {
+    //         return #greater;
+    //     } else {
+    //         if (field1.value < field2.value) {
+    //             return #less;
+    //         } else if (field1.value > field2.value) {
+    //             return #greater;
+    //         } else {
+    //             return #equal;
+    //         };
+    //     };
+    // };
+
+    // func equalEventFilters(filter1 : EventFilter, filter2 : EventFilter) : Bool {
+    //     let sortedFilter1 = Array.sort(filter1, compareEventFields);
+    //     let sortedFilter2 = Array.sort(filter2, compareEventFields);
+
+    //     return Array.equal<EventField>(
+    //         sortedFilter1,
+    //         sortedFilter2,
+    //         func(field1, field2) {
+    //             field1.name == field2.name and field1.value == field2.value
+    //         },
+    //     );
+    // };
+
+    public func subscribe(subscriber : Subscriber) : async () {
+        let principal = subscriber.callback;
+
+        eventHub.subscribers.put(principal, subscriber);
     };
 
-    func equalEventFilters(filter1 : EventFilter, filter2 : EventFilter) : Bool {
-        // Сортировка фильтров перед сравнением
-        let sortedFilter1 = Array.sort(filter1, compareEventFields);
-        let sortedFilter2 = Array.sort(filter2, compareEventFields);
-
-        return Array.equal<EventField>(
-            sortedFilter1,
-            sortedFilter2,
-            func(field1, field2) {
-                field1.name == field2.name and field1.value == field2.value
-            },
-        );
+    public func unsubscribe(principal : Principal) : async () {
+        eventHub.subscribers.delete(principal);
     };
 
-    public func addEventListener(filter : EventFilter, endpoint : RemoteCallEndpoint) : async () {
-        let existingPair = Array.find<FilterListenersPair>(
-            listeners,
-            func(pair) {
-                equalEventFilters(pair.filter, filter);
-            },
-        );
-
-        switch (existingPair) {
-            case (?pair) {
-                let updatedListeners = Array.append(pair.listeners, [endpoint]);
-                let updatedPair = {
-                    filter = filter;
-                    listeners = updatedListeners;
-                };
-                let newListenersPairs = Array.map<FilterListenersPair, FilterListenersPair>(
-                    listeners,
-                    func(p) {
-                        if (equalEventFilters(p.filter, pair.filter)) {
-                            updatedPair;
-                        } else { p };
-                    },
-                );
-                listeners := newListenersPairs;
-            };
-            case null {
-                listeners := Array.append(listeners, [{ filter = filter; listeners = [endpoint] }]);
-            };
-        };
-    };
-
-    public func removeEventListener(filter : EventFilter, endpoint : RemoteCallEndpoint) : async () {
-        listeners := Array.filter<FilterListenersPair>(
-            listeners,
-            func(pair : FilterListenersPair) : Bool {
-                if (equalEventFilters(pair.filter, filter)) {
-                    let newListeners = Array.filter<RemoteCallEndpoint>(
-                        pair.listeners,
-                        func(ep : RemoteCallEndpoint) : Bool {
-                            ep.canisterId != endpoint.canisterId or ep.methodName != endpoint.methodName;
-                        },
-                    );
-                    return Array.size(newListeners) > 0;
-                } else {
-                    return true;
-                };
-            },
-        );
-    };
-
-    public func emitEvent(event : Event) : async () {
-        // Добавляем событие в список событий
+    public func emitEvent(event : E.Event) : async [Subscriber] {
+        // let event : E.Event = mappingEventDaoEvent(eventDao);
         eventHub.events := Array.append(eventHub.events, [event]);
 
-        // Перебираем всех подписчиков
+        let subscribersArray = Iter.toArray(eventHub.subscribers.vals());
+
         for (subscriber in eventHub.subscribers.vals()) {
-            // Проверяем, соответствует ли событие фильтру подписчика
+
             if (isEventMatchFilter(event, subscriber.filter)) {
                 ignore await sendEvent(event, subscriber.callback);
             };
+
         };
+
+        return subscribersArray;
     };
 
-    func sendEvent(event : Event, canister_id : Principal) : async Result.Result<[(Text, Text)], Text> {
-        let subscriber_canister : CreateEvent = actor (Principal.toText(canister_id));
+    // func mappingEventDaoEvent(eventDao : EventDAO) : E.Event {
+    //     switch (eventDao.eventType) {
+    //         case (#CreateEvent) {
+    //             let ev : E.Events = ?#CreateEvent;
+    //             let result : E.Event = {
+    //                 eventType = ev;
+    //                 topics = eventDao.topics;
+    //             };
+    //         };
+    //         case (_) {
+    //             let result : E.Event = {
+    //                 eventType = null;
+    //                 topics = eventDao.topics;
+    //             };
+    //         };
+    //     };
 
-        switch (await subscriber_canister.creation(event)) {
-            case (#ok(result)) {
-                #ok(result);
-            };
-            case (#err(errorMsg)) {
-                #err("Ошибка вызова: " # errorMsg);
-            };
+    // };
+
+    func isEventMatchFilter(event : E.Event, filter : EventFilter) : Bool {
+        switch (filter.eventType) {
+            case (null) {};
+            case (?t) if (t != event.eventType) { return false };
         };
-    };
 
-    func isEventMatchFilter(event : Event, filter : EventFilter) : Bool {
-        // Для каждого поля фильтра проверяем, присутствует ли оно в темах события
-        for (field in filter.vals()) {
-            // Ищем поле фильтра в темах события
+        for (field in filter.fieldFilters.vals()) {
             let found = Array.find<EventField>(
                 event.topics,
                 func(topic : EventField) : Bool {
@@ -161,31 +137,162 @@ actor class Hub() {
                 },
             );
             if (found == null) {
-                // Если поле фильтра не найдено в темах события, событие не соответствует фильтру
                 return false;
             };
         };
-        // Все поля фильтра найдены в темах события
+
         return true;
     };
 
-    public func getSubscribers(filter : EventFilter) : async [RemoteCallEndpoint] {
-        // Используем Array.find для поиска пары с соответствующим фильтром
-        let maybePair = Array.find<FilterListenersPair>(
-            listeners,
-            func(pair : FilterListenersPair) : Bool {
-                equalEventFilters(pair.filter, filter);
-            },
-        );
+    func sendEvent(event : E.Event, canisterId : Principal) : async Result.Result<[(Text, Text)], Text> {
+        let subscriber_canister_id = Principal.toText(canisterId);
 
-        // Возвращаем список слушателей или пустой список, если фильтр не найден
-        switch (maybePair) {
-            case (?pair) {
-                return pair.listeners;
+        switch (event.eventType) {
+            case (#CreateEvent(_)) {
+                let canister : E.CreateEvent = actor (subscriber_canister_id);
+                await canister.creation(event);
             };
-            case null {
-                return [];
+            case (#BurnEvent(_)) {
+                let canister : E.BurnEvent = actor (subscriber_canister_id);
+                await canister.burn(event);
+            };
+            // TODO Add other types here
+            case _ {
+                return #err("Unknown Event Type");
             };
         };
     };
+
+    // public func addEventListener(filter : EventFilter, endpoint : RemoteCallEndpoint) : async () {
+    //     let existingPair = Array.find<FilterListenersPair>(
+    //         listeners,
+    //         func(pair) {
+    //             equalEventFilters(pair.filter, filter);
+    //         },
+    //     );
+
+    //     switch (existingPair) {
+    //         case (?pair) {
+    //             let updatedListeners = Array.append(pair.listeners, [endpoint]);
+    //             let updatedPair = {
+    //                 filter = filter;
+    //                 listeners = updatedListeners;
+    //             };
+    //             let newListenersPairs = Array.map<FilterListenersPair, FilterListenersPair>(
+    //                 listeners,
+    //                 func(p) {
+    //                     if (equalEventFilters(p.filter, pair.filter)) {
+    //                         updatedPair;
+    //                     } else { p };
+    //                 },
+    //             );
+    //             listeners := newListenersPairs;
+    //         };
+    //         case null {
+    //             listeners := Array.append(listeners, [{ filter = filter; listeners = [endpoint] }]);
+    //         };
+    //     };
+    // };
+
+    // public func removeEventListener(filter : EventFilter, endpoint : RemoteCallEndpoint) : async () {
+    //     listeners := Array.filter<FilterListenersPair>(
+    //         listeners,
+    //         func(pair : FilterListenersPair) : Bool {
+    //             if (equalEventFilters(pair.filter, filter)) {
+    //                 let newListeners = Array.filter<RemoteCallEndpoint>(
+    //                     pair.listeners,
+    //                     func(ep : RemoteCallEndpoint) : Bool {
+    //                         ep.canisterId != endpoint.canisterId or ep.methodName != endpoint.methodName;
+    //                     },
+    //                 );
+    //                 return Array.size(newListeners) > 0;
+    //             } else {
+    //                 return true;
+    //             };
+    //         },
+    //     );
+    // };
+
+    // public func emitEvent(event : Event) : async () {
+    //     let tasks = Array.map(
+    //         eventHub.subscribers.vals(),
+    //         func(subscriber : Subscriber) : async () {
+    //             if (isEventMatchFilter(event, subscriber.filter)) {
+    //                 ignore await sendEvent(event, subscriber.callback);
+    //             };
+    //         },
+    //     );
+    //     await Async.par(parallel_calls);
+    // };
+
+    // func sendEvent(event : Event, canisterId : Principal) : async Result.Result<[(Text, Text)], Text> {
+    //     let subscriber_canister_id = Principal.toText(canisterId);
+    //     switch (event.topics) {
+    //         case (#CreateEvent(createActor)) {
+    //             let canister = actor (subscriber_canister_id);
+    //             await canister.creation(event);
+    //         };
+    //         case (#BurnEvent) {
+    //             let canister : E.BurnEvent = actor (subscriber_canister_id);
+    //             await canister.burn(event);
+    //         };
+    //         case _ {
+    //             return #err("Unknown Event Type");
+    //         };
+    //     };
+    // };
+
+    // func isEventMatchFilter(event : Event, filter : EventFilter) : Bool {
+    //     for (field in filter.vals()) {
+    //         if (Array.find<EventField>(event.topics, func(topic) { topic == field }) == null) {
+    //             return false;
+    //         };
+    //     };
+    //     return true;
+    // };
+
+    public func getSubscribers(filter : EventFilter) : async [Subscriber] {
+        let subscribers = Iter.toArray(eventHub.subscribers.vals());
+
+        let filteredSubscribers = Array.filter<Subscriber>(
+            subscribers,
+            func(subscriber : Subscriber) : Bool {
+                return compareEventFilter(subscriber.filter, filter);
+            },
+        );
+
+        return filteredSubscribers;
+    };
+
+    private func compareEventFilter(filter1 : EventFilter, filter2 : EventFilter) : Bool {
+        switch (filter1.eventType, filter2.eventType) {
+            case (null, null) {};
+            case (null, _) {};
+            case (_, null) {};
+            case (?type1, ?type2) if (type1 != type2) return false;
+        };
+
+        let sortedFields1 = Array.sort<EventField>(
+            filter1.fieldFilters,
+            func(x : EventField, y : EventField) : Order.Order {
+                Text.compare(x.name, y.name);
+            },
+        );
+        let sortedFields2 = Array.sort<EventField>(
+            filter2.fieldFilters,
+            func(x : EventField, y : EventField) : Order.Order {
+                Text.compare(x.name, y.name);
+            },
+        );
+
+        return Array.equal<EventField>(
+            sortedFields1,
+            sortedFields2,
+            func(x : EventField, y : EventField) : Bool {
+                x.name == y.name and x.value == y.value
+            },
+        );
+    };
+
+    // TODO add postupgrade
 };

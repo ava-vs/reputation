@@ -1,7 +1,7 @@
 {
   "canisters": {
     "repb_backend": {
-      "main": "src/repb_backend/main.mo",
+      "main": "src/repb_backend/hub/main.mo",
       "type": "motoko"
     }
   },
