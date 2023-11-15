@@ -1,3 +1,5 @@
+import hub "canister:hub";
+
 import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import Buffer "mo:base/Buffer";
@@ -11,7 +13,7 @@ import Hub "./Hub";
 import T "./Types";
 import Json "./utils/JSON";
 
-actor class API(hub : Hub.Hub) {
+actor class API() {
     type HeaderField = (Text, Text);
 
     type HttpResponse = {
@@ -310,12 +312,13 @@ actor class API(hub : Hub.Hub) {
                                 };
                             };
                         };
-                        case _ { /* Игнорировать другие ключи */ };
+                        case _ { /* Ignore other keys */ };
                     };
                 };
 
-                // Проверка eventName и вызов соответствующего метода хаба
-                // ...
+                // TODO add hub.emit call
+                //create Event
+                // hub.emitEvent();
                 return {
                     status_code = 200;
                     headers = [("content-type", "text/plain")];
@@ -347,7 +350,7 @@ actor class API(hub : Hub.Hub) {
                                     switch (fVal) {
                                         case (#String(n)) { name := n };
                                         case _ {
-                                            /* Некорректное значение для name */
+                                            /* Invalid name */
                                         };
                                     };
                                 };
@@ -357,17 +360,17 @@ actor class API(hub : Hub.Hub) {
                                             value := Text.encodeUtf8(v);
                                         };
                                         case _ {
-                                            /* Некорректное значение для value */
+                                            /* Invalid value */
                                         };
                                     };
                                 };
-                                case _ { /* Игнорировать другие ключи */ };
+                                case _ { /* Ignore other keys */ };
                             };
                         };
                         { name = name; value = value };
                     };
                     case _ {
-                        { name = ""; value = Blob.fromArray([]) }; // Пустые значения для некорректных данных
+                        { name = ""; value = Blob.fromArray([]) }; //Empty value for invalid keys
                     };
                 };
             },

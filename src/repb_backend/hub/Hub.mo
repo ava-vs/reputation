@@ -2,15 +2,15 @@ import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import HashMap "mo:base/HashMap";
 import Int "mo:base/Int";
+import Iter "mo:base/Iter";
 import Nat "mo:base/Nat";
 import Order "mo:base/Order";
 import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
-import Iter "mo:base/Iter";
 
-import Types "./Types";
 import E "./EventTypes";
+import Types "./Types";
 
 actor class Hub() {
     type EventField = Types.EventField;
@@ -32,11 +32,6 @@ actor class Hub() {
 
     type EventName = E.EventName;
 
-    // type EventDAO = {
-    //     eventType : EventName;
-    //     topics : [EventField];
-    // };
-
     // For further batch handling
     var batchMakingDurationNano : Int = 1_000_000_000;
     var batchMaxSizeBytes : Nat = 500_000;
@@ -48,6 +43,7 @@ actor class Hub() {
         subscribers : HashMap.HashMap<Principal, Subscriber> = HashMap.HashMap<Principal, Subscriber>(10, Principal.equal, Principal.hash);
     };
 
+    // for TrieSet
     // func compareEventFields(field1 : EventField, field2 : EventField) : Order.Order {
     //     if (field1.name < field2.name) {
     //         return #less;
@@ -79,7 +75,7 @@ actor class Hub() {
 
     public func subscribe(subscriber : Subscriber) : async () {
         let principal = subscriber.callback;
-
+        //TODO check the subscriber for the required methods
         eventHub.subscribers.put(principal, subscriber);
     };
 
@@ -88,13 +84,12 @@ actor class Hub() {
     };
 
     public func emitEvent(event : E.Event) : async [Subscriber] {
-        // let event : E.Event = mappingEventDaoEvent(eventDao);
         eventHub.events := Array.append(eventHub.events, [event]);
 
         let subscribersArray = Iter.toArray(eventHub.subscribers.vals());
 
         for (subscriber in eventHub.subscribers.vals()) {
-
+            // TODO check subscriber
             if (isEventMatchFilter(event, subscriber.filter)) {
                 ignore await sendEvent(event, subscriber.callback);
             };
