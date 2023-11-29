@@ -8,13 +8,10 @@ import Result "mo:base/Result";
 import E "./EventTypes";
 
 module {
-    public type EventField = E.EventField;
-
-    public type Event = E.Event;
 
     public type EventFilter = {
         eventType : ?E.EventName;
-        fieldFilters : [EventField];
+        fieldFilters : [E.EventField];
     };
 
     public type RemoteCallEndpoint = {
@@ -33,4 +30,39 @@ module {
         filter : EventFilter;
     };
 
+    public type ApiError = {
+        #Unauthorized;
+        #InvalidTokenId;
+        #ZeroAddress;
+        #NoNFT;
+        #Other;
+    };
+
+    public type Result<S, E> = {
+        #Ok : S;
+        #Err : E;
+    };
+
+    // Reputation part
+
+    public type Branch = Nat8;
+
+    public type DocHistory = {
+        docId : DocId;
+        timestamp : Int;
+        changedBy : Principal;
+        value : Nat8;
+        comment : Text;
+    };
+
+    public type CommonError = {
+        #InsufficientFunds : { balance : Tokens };
+        #BadFee : { expected_fee : Tokens };
+        #TemporarilyUnavailable;
+        #GenericError : { error_code : Nat; message : Text };
+        #NotFound : { message : Text; docId : DocId };
+    };
+
+    public type Tokens = Nat;
+    public type DocId = Nat;
 };

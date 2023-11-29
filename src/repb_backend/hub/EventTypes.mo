@@ -4,7 +4,7 @@ module {
 
     public type EventField = {
         name : Text;
-        value : Text;
+        value : Blob;
     };
 
     public type EventName = {
@@ -15,12 +15,27 @@ module {
         #CollectionDeletedEvent;
         #AddToCollectionEvent;
         #RemoveFromCollectionEvent;
+        #InstantReputationUpdateEvent;
+        #AwaitingReputationUpdateEvent;
+        #NewRegistrationEvent;
+        #FeedbackSubmissionEvent;
         #Unknown;
     };
 
     public type Event = {
         eventType : EventName;
         topics : [EventField];
+        tokenId : ?Nat;
+        owner : ?Principal;
+        metadata : ?[(Text, Blob)];
+        creationDate : ?Int;
+    };
+
+    public type DocHistoryArgs = {
+        publisher : Principal;
+        docId : Nat;
+        value : Nat8;
+        comment : Text;
     };
 
     public type CreateEvent = actor {
@@ -38,13 +53,22 @@ module {
         collectionUpdated : Event -> async Result.Result<[(Text, Text)], Text>;
     };
     public type CollectionDeletedEvent = actor {
-        collectionDeletedd : Event -> async Result.Result<[(Text, Text)], Text>;
+        collectionDeleted : Event -> async Result.Result<[(Text, Text)], Text>;
     };
     public type AddToCollectionEvent = actor {
         addToCollection : Event -> async Result.Result<[(Text, Text)], Text>;
     };
     public type RemoveFromCollectionEvent = actor {
         removeFromCollection : Event -> async Result.Result<[(Text, Text)], Text>;
+    };
+    public type InstantReputationUpdateEvent = actor {
+        updateDocHistory : DocHistoryArgs -> async Result.Result<[(Text, Text)], Text>;
+    };
+    public type AwaitingReputationUpdateEvent = actor {
+        updateReputation : Event -> async Result.Result<[(Text, Text)], Text>;
+    };
+    public type FeedbackSubmissionEvent = actor {
+        feedbackSubmission : Event -> async Result.Result<[(Text, Text)], Text>;
     };
 
     public type Events = {
@@ -55,6 +79,9 @@ module {
         #CollectionDeletedEvent : CollectionDeletedEvent;
         #AddToCollectionEvent : AddToCollectionEvent;
         #RemoveFromCollectionEvent : RemoveFromCollectionEvent;
+        #InstantReputationUpdateEvent : InstantReputationUpdateEvent;
+        #AwaitingReputationUpdateEvent : AwaitingReputationUpdateEvent;
+        #FeedbackSubmissionEvent : FeedbackSubmissionEvent;
     };
 
     public func textToEventName(text : Text) : EventName {
@@ -66,6 +93,10 @@ module {
             case ("CollectionDeletedEvent") return #CollectionDeletedEvent;
             case ("AddToCollectionEvent") return #AddToCollectionEvent;
             case ("RemoveFromCollectionEvent") return #RemoveFromCollectionEvent;
+            case ("InstantReputationUpdateEvent") return #InstantReputationUpdateEvent;
+            case ("AwaitingReputationUpdateEvent") return #AwaitingReputationUpdateEvent;
+            case ("FeedbackSubmissionEvent") return #FeedbackSubmissionEvent;
+
             case (_) #Unknown;
         };
     };

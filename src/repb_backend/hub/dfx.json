@@ -1,0 +1,23 @@
+{
+  "canisters": {
+    "hub": {
+      "main": "Hub.mo",
+      "type": "motoko"
+    },
+    "api": {
+      "dependencies": [
+        "hub"
+    ],
+      "main": "API.mo",
+      "type": "motoko"
+    }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": ""
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1
+}

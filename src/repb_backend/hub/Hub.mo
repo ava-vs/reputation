@@ -4,6 +4,7 @@ import HashMap "mo:base/HashMap";
 import Int "mo:base/Int";
 import Iter "mo:base/Iter";
 import Nat "mo:base/Nat";
+import Option "mo:base/Option";
 import Order "mo:base/Order";
 import Principal "mo:base/Principal";
 import Result "mo:base/Result";
@@ -13,20 +14,15 @@ import E "./EventTypes";
 import Types "./Types";
 
 actor class Hub() {
-    type EventField = Types.EventField;
+    type EventField = E.EventField;
 
-    type Event = Types.Event;
+    type Event = E.Event;
 
     type EventFilter = Types.EventFilter;
 
     type RemoteCallEndpoint = Types.RemoteCallEndpoint;
 
     type EncodedEventBatch = Types.EncodedEventBatch;
-
-    type FilterListenersPair = {
-        filter : EventFilter;
-        listeners : [RemoteCallEndpoint];
-    };
 
     type Subscriber = Types.Subscriber;
 
@@ -36,42 +32,15 @@ actor class Hub() {
     var batchMakingDurationNano : Int = 1_000_000_000;
     var batchMaxSizeBytes : Nat = 500_000;
 
-    var listeners : [FilterListenersPair] = [];
+    // var listeners : [FilterListenersPair] = [];
+
+    let default_principal : Principal = Principal.fromText("aaaaa-aa");
+    let rep_canister_id = "aoxye-tiaaa-aaaal-adgnq-cai";
 
     var eventHub = {
         var events : [E.Event] = [];
         subscribers : HashMap.HashMap<Principal, Subscriber> = HashMap.HashMap<Principal, Subscriber>(10, Principal.equal, Principal.hash);
     };
-
-    // for TrieSet
-    // func compareEventFields(field1 : EventField, field2 : EventField) : Order.Order {
-    //     if (field1.name < field2.name) {
-    //         return #less;
-    //     } else if (field1.name > field2.name) {
-    //         return #greater;
-    //     } else {
-    //         if (field1.value < field2.value) {
-    //             return #less;
-    //         } else if (field1.value > field2.value) {
-    //             return #greater;
-    //         } else {
-    //             return #equal;
-    //         };
-    //     };
-    // };
-
-    // func equalEventFilters(filter1 : EventFilter, filter2 : EventFilter) : Bool {
-    //     let sortedFilter1 = Array.sort(filter1, compareEventFields);
-    //     let sortedFilter2 = Array.sort(filter2, compareEventFields);
-
-    //     return Array.equal<EventField>(
-    //         sortedFilter1,
-    //         sortedFilter2,
-    //         func(field1, field2) {
-    //             field1.name == field2.name and field1.value == field2.value
-    //         },
-    //     );
-    // };
 
     public func subscribe(subscriber : Subscriber) : async () {
         let principal = subscriber.callback;
@@ -84,6 +53,8 @@ actor class Hub() {
     };
 
     public func emitEvent(event : E.Event) : async [Subscriber] {
+        // TODO save publisher+his doctoken to hub
+
         eventHub.events := Array.append(eventHub.events, [event]);
 
         let subscribersArray = Iter.toArray(eventHub.subscribers.vals());
@@ -98,25 +69,6 @@ actor class Hub() {
 
         return subscribersArray;
     };
-
-    // func mappingEventDaoEvent(eventDao : EventDAO) : E.Event {
-    //     switch (eventDao.eventType) {
-    //         case (#CreateEvent) {
-    //             let ev : E.Events = ?#CreateEvent;
-    //             let result : E.Event = {
-    //                 eventType = ev;
-    //                 topics = eventDao.topics;
-    //             };
-    //         };
-    //         case (_) {
-    //             let result : E.Event = {
-    //                 eventType = null;
-    //                 topics = eventDao.topics;
-    //             };
-    //         };
-    //     };
-
-    // };
 
     func isEventMatchFilter(event : E.Event, filter : EventFilter) : Bool {
         switch (filter.eventType) {
@@ -150,6 +102,20 @@ actor class Hub() {
             case (#BurnEvent(_)) {
                 let canister : E.BurnEvent = actor (subscriber_canister_id);
                 await canister.burn(event);
+            };
+            case (#InstantReputationUpdateEvent(_)) {
+                let canister : E.InstantReputationUpdateEvent = actor (subscriber_canister_id);
+                let args : E.DocHistoryArgs = {
+                    publisher = Option.get<Principal>(event.owner, default_principal);
+                    docId = Option.get<Nat>(event.tokenId, 0);
+                    value = 10;
+                    comment = "Successful completion of the Motoko Basic course";
+                };
+                await canister.updateDocHistory(args);
+            };
+            case (#AwaitingReputationUpdateEvent(_)) {
+                let canister : E.AwaitingReputationUpdateEvent = actor (subscriber_canister_id);
+                await canister.updateReputation(event);
             };
             // TODO Add other types here
             case _ {
@@ -208,44 +174,6 @@ actor class Hub() {
     //     );
     // };
 
-    // public func emitEvent(event : Event) : async () {
-    //     let tasks = Array.map(
-    //         eventHub.subscribers.vals(),
-    //         func(subscriber : Subscriber) : async () {
-    //             if (isEventMatchFilter(event, subscriber.filter)) {
-    //                 ignore await sendEvent(event, subscriber.callback);
-    //             };
-    //         },
-    //     );
-    //     await Async.par(parallel_calls);
-    // };
-
-    // func sendEvent(event : Event, canisterId : Principal) : async Result.Result<[(Text, Text)], Text> {
-    //     let subscriber_canister_id = Principal.toText(canisterId);
-    //     switch (event.topics) {
-    //         case (#CreateEvent(createActor)) {
-    //             let canister = actor (subscriber_canister_id);
-    //             await canister.creation(event);
-    //         };
-    //         case (#BurnEvent) {
-    //             let canister : E.BurnEvent = actor (subscriber_canister_id);
-    //             await canister.burn(event);
-    //         };
-    //         case _ {
-    //             return #err("Unknown Event Type");
-    //         };
-    //     };
-    // };
-
-    // func isEventMatchFilter(event : Event, filter : EventFilter) : Bool {
-    //     for (field in filter.vals()) {
-    //         if (Array.find<EventField>(event.topics, func(topic) { topic == field }) == null) {
-    //             return false;
-    //         };
-    //     };
-    //     return true;
-    // };
-
     public func getSubscribers(filter : EventFilter) : async [Subscriber] {
         let subscribers = Iter.toArray(eventHub.subscribers.vals());
 
@@ -288,6 +216,12 @@ actor class Hub() {
             },
         );
     };
+
+    // func updateDocHistory(event : E.Event) : async Types.Result<Types.DocHistory, Types.CommonError> {
+    //     // TODO - add to InstantReputationUpdateEvent event handler rep.updateDocHistory();
+
+    //     return #Err(#TemporarilyUnavailable);
+    // };
 
     // TODO add postupgrade
 };

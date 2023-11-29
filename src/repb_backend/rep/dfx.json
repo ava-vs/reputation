@@ -1,0 +1,23 @@
+{
+    "canisters": {
+        "rep": {
+            "dependencies": [
+                "ledger"
+            ],
+            "main": "Reputation.mo",
+            "type": "motoko"
+        },
+        "ledger": {
+            "main": "Ledger.mo",
+            "type": "motoko"
+        }
+    },
+    "defaults": {
+        "build": {
+            "args": "",
+            "packtool": ""
+        }
+    },
+    "output_env_file": ".env",
+    "version": 1
+}
