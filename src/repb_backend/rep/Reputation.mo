@@ -240,8 +240,60 @@ actor {
     return #Ok(newDoc);
   };
 
+  /*
+    Test updateDocHistory
+  */
+
+  public func testUpdateDocHistory({
+    user : Principal;
+    docId : DocId;
+    value : Nat8;
+    comment : Text;
+  }) : async Text {
+    comment;
+  };
+
+  public func test2UpdateDocHistory() : async Types.Result<DocHistory, Types.CommonError> {
+    let user = Principal.fromText("aaaaa-aa"); 
+    let docId = 1;
+    let value : Nat8 = 1; 
+    let comment = "Test comment"; 
+
+    let expectedResult : Types.Result<DocHistory, Types.CommonError> = #Ok({
+      docId = docId;
+      timestamp = Time.now();
+      changedBy = user;
+      value = value;
+      comment = comment;
+    });
+    let result = await updateDocHistory({
+      user = user;
+      docId = docId;
+      value = value;
+      comment = comment;
+    });
+
+    switch (result) {
+      case (#Ok(docHistory)) {
+        if (docHistory.docId == docId) {
+          return expectedResult; //"updateDocHistory test passed";
+        } else {
+          return #Err(#TemporarilyUnavailable); //"updateDocHistory test failed";
+        };
+      };
+      case (#Err(err)) {
+        return #Err(#TemporarilyUnavailable);
+      };
+    };
+  };
+
   //Key method for update reputation based on document
-  public func updateDocHistory(user : Principal, docId : DocId, value : Nat8, comment : Text) : async Types.Result<DocHistory, Types.CommonError> {
+  public func updateDocHistory({
+    user : Principal;
+    docId : DocId;
+    value : Nat8;
+    comment : Text;
+  }) : async Types.Result<DocHistory, Types.CommonError> {
     let doc = switch (checkDocument(docId)) {
       case (#Err(err)) { return #Err(err) };
       case (#Ok(doc)) { doc };
@@ -258,6 +310,8 @@ actor {
     ignore await setUserReputation(user, branch, Nat8.toNat(value));
     #Ok(newDocHistory);
   };
+
+  
 
   public func getDocHistory(docId : DocId) : async [DocHistory] {
     Option.get(docHistory.get(docId), []);

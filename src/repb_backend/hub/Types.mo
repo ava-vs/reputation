@@ -26,7 +26,7 @@ module {
     };
 
     public type Subscriber = {
-        callback : Principal;
+        callback : Principal; // subscriber's canister_id
         filter : EventFilter;
     };
 

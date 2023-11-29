@@ -4,6 +4,7 @@ import HashMap "mo:base/HashMap";
 import Int "mo:base/Int";
 import Iter "mo:base/Iter";
 import Nat "mo:base/Nat";
+import Nat8 "mo:base/Nat8";
 import Option "mo:base/Option";
 import Order "mo:base/Order";
 import Principal "mo:base/Principal";
@@ -62,7 +63,7 @@ actor class Hub() {
         for (subscriber in eventHub.subscribers.vals()) {
             // TODO check subscriber
             if (isEventMatchFilter(event, subscriber.filter)) {
-                ignore await sendEvent(event, subscriber.callback);
+                let response = await sendEvent(event, subscriber.callback);
             };
 
         };
@@ -91,6 +92,30 @@ actor class Hub() {
         return true;
     };
 
+    // TEST sendEvent
+
+    public func testSendEvent(flag : Nat) : async Text {
+        let canister : E.InstantReputationUpdateEvent = actor ("aoxye-tiaaa-aaaal-adgnq-cai");
+        let args : E.DocHistoryArgs = {
+            user = Principal.fromText("bs3e6-4i343-voosn-wogd7-6kbdg-mctak-hn3ws-k7q7f-fye2e-uqeyh-yae");
+            docId = 1;
+            value = 10;
+            comment = "Successful completion of the Motoko Basic course";
+        };
+        let response = await canister.testUpdateDocHistory(args);
+        if (flag == 1) return "test 1 done";
+        if (flag == 0) {
+            return "ok";
+        };
+        // if (flag == 3) {
+        //     switch (response) {                
+        //         case (#Ok(res))  return "ok";
+        //         case (#Err(err)) return "er";
+        //     }
+        // };
+        "unknown";
+    };
+
     func sendEvent(event : E.Event, canisterId : Principal) : async Result.Result<[(Text, Text)], Text> {
         let subscriber_canister_id = Principal.toText(canisterId);
 
@@ -106,16 +131,17 @@ actor class Hub() {
             case (#InstantReputationUpdateEvent(_)) {
                 let canister : E.InstantReputationUpdateEvent = actor (subscriber_canister_id);
                 let args : E.DocHistoryArgs = {
-                    publisher = Option.get<Principal>(event.owner, default_principal);
+                    user = Option.get<Principal>(event.owner, default_principal);
                     docId = Option.get<Nat>(event.tokenId, 0);
                     value = 10;
                     comment = "Successful completion of the Motoko Basic course";
                 };
-                await canister.updateDocHistory(args);
+                let response = await canister.updateDocHistory(args);
+                #ok([("updateDocHistory done", "reputation increase by " # Nat8.toText(args.value))]);
             };
             case (#AwaitingReputationUpdateEvent(_)) {
                 let canister : E.AwaitingReputationUpdateEvent = actor (subscriber_canister_id);
-                await canister.updateReputation(event);
+                let response = await canister.updateReputation(event);
             };
             // TODO Add other types here
             case _ {

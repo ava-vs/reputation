@@ -32,7 +32,7 @@ module {
     };
 
     public type DocHistoryArgs = {
-        publisher : Principal;
+        user : Principal;
         docId : Nat;
         value : Nat8;
         comment : Text;
@@ -63,6 +63,7 @@ module {
     };
     public type InstantReputationUpdateEvent = actor {
         updateDocHistory : DocHistoryArgs -> async Result.Result<[(Text, Text)], Text>;
+        testUpdateDocHistory : DocHistoryArgs -> async Text;
     };
     public type AwaitingReputationUpdateEvent = actor {
         updateReputation : Event -> async Result.Result<[(Text, Text)], Text>;
