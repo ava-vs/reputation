@@ -18,6 +18,7 @@ import Text "mo:base/Text";
 import Time "mo:base/Time";
 import TrieMap "mo:base/TrieMap";
 
+import Logger "../hub/utils/Logger";
 import Types "./Types";
 
 actor {
@@ -70,6 +71,10 @@ actor {
 
   type TransferFromError = Ledger.TransferFromError;
 
+  stable var state : Logger.State<Text> = Logger.new<Text>(0, null);
+  let logger = Logger.Logger<Text>(state);
+  let prefix = "[" # Int.toText(Time.now() / 1_000_000_000) # "] ";
+
   let hashBranch = func(x : Branch) : Nat32 {
     return Nat32.fromNat(Nat8.toNat(x * 7));
   };
@@ -84,12 +89,20 @@ actor {
   // map docId - docHistory
   var docHistory = Map.HashMap<DocId, [DocHistory]>(10, Nat.equal, Hash.hash);
   // map userId - [ Reputation ] or map userId - Map (branchId : value)
-  // TODO add stable storage for reputation
+
   var userReputation = Map.HashMap<Principal, Map.HashMap<Branch, Nat>>(1, Principal.equal, Principal.hash);
   // map tag : branchId
   var tagMap = TrieMap.TrieMap<Text, Branch>(Text.equal, Text.hash);
-  // TODO add stable storage for shared reputation
   var userSharedReputation = Map.HashMap<Principal, Map.HashMap<Branch, Nat>>(1, Principal.equal, Principal.hash);
+
+  public func viewLogs(end : Nat) : async [Text] {
+    let view = logger.view(0, end);
+    let result = Buffer.Buffer<Text>(1);
+    for (message in view.messages.vals()) {
+      result.add(message);
+    };
+    Buffer.toArray(result);
+  };
 
   public func getUserReputation(user : Principal) : async Nat {
     let balance = await getUserBalance(user);
@@ -254,10 +267,10 @@ actor {
   };
 
   public func test2UpdateDocHistory() : async Types.Result<DocHistory, Types.CommonError> {
-    let user = Principal.fromText("aaaaa-aa"); 
+    let user = Principal.fromText("aaaaa-aa");
     let docId = 1;
-    let value : Nat8 = 1; 
-    let comment = "Test comment"; 
+    let value : Nat8 = 1;
+    let comment = "Test comment";
 
     let expectedResult : Types.Result<DocHistory, Types.CommonError> = #Ok({
       docId = docId;
@@ -287,16 +300,52 @@ actor {
     };
   };
 
+  //Method for event handling
+
+  public func eventHandler({
+    user : Principal;
+    docId : Nat;
+    value : Nat8;
+    comment : Text;
+  }) : async Text {
+    logger.append([prefix # " Method eventHandler starts, calling method updateDocHistory"]);
+
+    let result = await updateDocHistory({
+      user = user;
+      docId = docId;
+      value = value;
+      comment = comment;
+    });
+    switch (result) {
+      case (#Ok(docHistory)) {
+        logger.append([prefix # " eventHandler: updateDocHistory result was received"]);
+        "Event InstantReputationUpdateEvent was handled";
+      };
+      case (#Err(err)) {
+        logger.append([prefix # " eventHandler: updateDocHistory result was received with error"]);
+        "Event InstantReputationUpdateEvent was handled with error";
+      };
+    };
+  };
+
   //Key method for update reputation based on document
   public func updateDocHistory({
     user : Principal;
-    docId : DocId;
+    docId : Nat;
     value : Nat8;
     comment : Text;
   }) : async Types.Result<DocHistory, Types.CommonError> {
+    logger.append([prefix # " Method updateDocHistory starts, checking document"]);
+
     let doc = switch (checkDocument(docId)) {
-      case (#Err(err)) { return #Err(err) };
-      case (#Ok(doc)) { doc };
+      case (#Err(err)) {
+        logger.append([prefix # " updateDocHistory: document check failed"]);
+        return #Err(err);
+      };
+      case (#Ok(doc)) {
+        logger.append([prefix # " updateDocHistory: document ok"]);
+        doc;
+      };
     };
     let newDocHistory : DocHistory = {
       docId = docId;
@@ -306,12 +355,15 @@ actor {
       comment = comment;
     };
     docHistory.put(docId, Array.append(Option.get(docHistory.get(docId), []), [newDocHistory]));
+    logger.append([prefix # " updateDocHistory: checking tags"]);
+
     let branch = await getBranchByTagName(doc.tags[0]);
-    ignore await setUserReputation(user, branch, Nat8.toNat(value));
+    logger.append([prefix # " updateDocHistory: branch found by tag " # doc.tags[0] # " is " # Nat8.toText(branch) # " for user " # Principal.toText(user) # " with value " # Nat8.toText(value) # " and comment " # comment]);
+
+    let res = await setUserReputation(user, branch, Nat8.toNat(value));
+    logger.append([prefix # " updateDocHistory: setUserReputation result "]);
     #Ok(newDocHistory);
   };
-
-  
 
   public func getDocHistory(docId : DocId) : async [DocHistory] {
     Option.get(docHistory.get(docId), []);
@@ -364,8 +416,14 @@ actor {
   // Tag part
   public func getBranchByTagName(tag : Tag) : async Branch {
     let res = switch (tagMap.get(tag)) {
-      case null Nat8.fromNat(0);
-      case (?br) br;
+      case null {
+        logger.append([prefix # " getBranchByTagName: branch not found by tag " # tag]);
+        Nat8.fromNat(0);
+      };
+      case (?br) {
+        logger.append([prefix # " getBranchByTagName: branch found by tag " # tag # " is " # Nat8.toText(br)]);
+        br;
+      };
     };
     res;
   };
@@ -604,5 +662,63 @@ Token Handling
     // public func distributeTokens(user: Principal, branch : Nat8, value : Nat) : async Result<Bool, TransferFromError> {
     //   sendToken
     // };
+  };
+
+  // Stable tags, docHistory and user reputation storage
+  stable var tagEntries : [(Tag, Branch)] = [];
+  stable var userReputationArray : [(Principal, [(Branch, Nat)])] = [];
+  stable var docHistoryArray : [(DocId, [DocHistory])] = [];
+  system func preupgrade() {
+    for ((tag, branch) in tagMap.entries()) {
+      tagEntries := Array.append(tagEntries, [(tag, branch)]);
+    };
+    for ((user, entry) in userReputation.entries()) {
+      var buffer = Buffer.Buffer<(Branch, Nat)>(0);
+      for ((branch, value) in entry.entries()) {
+        buffer.add((branch, value));
+      };
+      userReputationArray := Array.append(userReputationArray, [(user, Buffer.toArray(buffer))]);
+    };
+    for ((docId, entry) in docHistory.entries()) {
+      var buffer = Buffer.Buffer<DocHistory>(0);
+      for (item in entry.vals()) {
+        buffer.add(item);
+      };
+      docHistoryArray := Array.append(docHistoryArray, [(docId, Buffer.toArray(buffer))]);
+    };
+  };
+
+  system func postupgrade() {
+    for ((tag, branch) in tagEntries.vals()) {
+      tagMap.put(tag, branch);
+    };
+    tagEntries := [];
+    for ((user, entry) in userReputationArray.vals()) {
+      var map = Map.HashMap<Branch, Nat>(0, Nat8.equal, hashBranch);
+      for ((branch, value) in entry.vals()) {
+        map.put(branch, value);
+      };
+      userReputation.put(user, map);
+    };
+    userReputationArray := [];
+    for ((docId, entry) in docHistoryArray.vals()) {
+      docHistory.put(docId, entry);
+    };
+    docHistoryArray := [];
+  };
+
+  public func clearTags() : async Bool {
+    tagMap := TrieMap.TrieMap<Text, Branch>(Text.equal, Text.hash);
+    true;
+  };
+
+  public func clearUserReputation() : async Bool {
+    userReputation := Map.HashMap<Principal, Map.HashMap<Branch, Nat>>(0, Principal.equal, Principal.hash);
+    true;
+  };
+
+  public func clearDocHistory() : async Bool {
+    docHistory := Map.HashMap<DocId, [DocHistory]>(0, Nat.equal, Hash.hash);
+    true;
   };
 };

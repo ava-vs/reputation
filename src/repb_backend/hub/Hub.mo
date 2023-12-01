@@ -1,5 +1,6 @@
 import Array "mo:base/Array";
 import Blob "mo:base/Blob";
+import Buffer "mo:base/Buffer";
 import HashMap "mo:base/HashMap";
 import Int "mo:base/Int";
 import Iter "mo:base/Iter";
@@ -10,9 +11,11 @@ import Order "mo:base/Order";
 import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
+import Time "mo:base/Time";
 
 import E "./EventTypes";
 import Types "./Types";
+import Logger "utils/Logger";
 
 actor class Hub() {
     type EventField = E.EventField;
@@ -29,6 +32,12 @@ actor class Hub() {
 
     type EventName = E.EventName;
 
+    // Logger
+
+    stable var state : Logger.State<Text> = Logger.new<Text>(0, null);
+    let logger = Logger.Logger<Text>(state);
+    let prefix = "[" # Int.toText(Time.now() / 1_000_000_000) # "] ";
+
     // For further batch handling
     var batchMakingDurationNano : Int = 1_000_000_000;
     var batchMaxSizeBytes : Nat = 500_000;
@@ -43,6 +52,15 @@ actor class Hub() {
         subscribers : HashMap.HashMap<Principal, Subscriber> = HashMap.HashMap<Principal, Subscriber>(10, Principal.equal, Principal.hash);
     };
 
+    public func viewLogs(end : Nat) : async [Text] {
+        let view = logger.view(0, end);
+        let result = Buffer.Buffer<Text>(1);
+        for (message in view.messages.vals()) {
+            result.add(message);
+        };
+        Buffer.toArray(result);
+    };
+
     public func subscribe(subscriber : Subscriber) : async () {
         let principal = subscriber.callback;
         //TODO check the subscriber for the required methods
@@ -55,14 +73,17 @@ actor class Hub() {
 
     public func emitEvent(event : E.Event) : async [Subscriber] {
         // TODO save publisher+his doctoken to hub
-
+        logger.append([prefix # "Starting method emitEvent"]);
         eventHub.events := Array.append(eventHub.events, [event]);
 
         let subscribersArray = Iter.toArray(eventHub.subscribers.vals());
 
         for (subscriber in eventHub.subscribers.vals()) {
             // TODO check subscriber
+            logger.append([prefix # "emitEvent: check subscriber"]);
+
             if (isEventMatchFilter(event, subscriber.filter)) {
+                logger.append([prefix # "emitEvent: event matched"]);
                 let response = await sendEvent(event, subscriber.callback);
             };
 
@@ -71,10 +92,40 @@ actor class Hub() {
         return subscribersArray;
     };
 
+    func eventNameToText(eventName : EventName) : Text {
+        switch (eventName) {
+            case (#CreateEvent) { "CreateEvent" };
+            case (#BurnEvent) { "BurnEvent" };
+            case (#CollectionCreatedEvent) { "CollectionCreatedEvent" };
+            case (#CollectionUpdatedEvent) { "CollectionUpdatedEvent" };
+            case (#CollectionDeletedEvent) { "CollectionDeletedEvent" };
+            case (#AddToCollectionEvent) { "AddToCollectionEvent" };
+            case (#RemoveFromCollectionEvent) { "RemoveFromCollectionEvent" };
+            case (#InstantReputationUpdateEvent) {
+                "InstantReputationUpdateEvent";
+            };
+            case (#AwaitingReputationUpdateEvent) {
+                "AwaitingReputationUpdateEvent";
+            };
+            case (#FeedbackSubmissionEvent) { "FeedbackSubmissionEvent" };
+            case (#NewRegistrationEvent) { "NewRegistrationEvent" };
+            case (#Unknown) { "Unknown" };
+        };
+    };
+
     func isEventMatchFilter(event : E.Event, filter : EventFilter) : Bool {
+        logger.append([prefix # "Starting method isEventMatchFilter"]);
+
+        logger.append([prefix # "isEventMatchFilter: Checking event type", eventNameToText(Option.get<E.EventName>(filter.eventType, #Unknown))]);
+
         switch (filter.eventType) {
-            case (null) {};
-            case (?t) if (t != event.eventType) { return false };
+            case (null) {
+                logger.append([prefix # "isEventMatchFilter: Event type is null"]);
+            };
+            case (?t) if (t != event.eventType) {
+                logger.append([prefix # "isEventMatchFilter: Event type does not match", eventNameToText(event.eventType)]);
+                return false;
+            };
         };
 
         for (field in filter.fieldFilters.vals()) {
@@ -85,10 +136,11 @@ actor class Hub() {
                 },
             );
             if (found == null) {
+                logger.append([prefix # "isEventMatchFilter: Field not found", field.name]);
                 return false;
             };
         };
-
+        logger.append([prefix # "isEventMatchFilter: Event matched"]);
         return true;
     };
 
@@ -102,21 +154,17 @@ actor class Hub() {
             value = 10;
             comment = "Successful completion of the Motoko Basic course";
         };
-        let response = await canister.testUpdateDocHistory(args);
+        let response = await canister.getMintingAccount();
         if (flag == 1) return "test 1 done";
         if (flag == 0) {
             return "ok";
         };
-        // if (flag == 3) {
-        //     switch (response) {                
-        //         case (#Ok(res))  return "ok";
-        //         case (#Err(err)) return "er";
-        //     }
-        // };
+        if (flag == 3) { return Principal.toText(response) };
         "unknown";
     };
 
     func sendEvent(event : E.Event, canisterId : Principal) : async Result.Result<[(Text, Text)], Text> {
+        logger.append([prefix # "Starting method sendEvent"]);
         let subscriber_canister_id = Principal.toText(canisterId);
 
         switch (event.eventType) {
@@ -129,14 +177,29 @@ actor class Hub() {
                 await canister.burn(event);
             };
             case (#InstantReputationUpdateEvent(_)) {
+                logger.append([prefix # "sendEvent: case #InstantReputationUpdateEvent, start updateDocHistory"]);
                 let canister : E.InstantReputationUpdateEvent = actor (subscriber_canister_id);
+                logger.append([prefix # "sendEvent: canister created"]);
+
                 let args : E.DocHistoryArgs = {
                     user = Option.get<Principal>(event.owner, default_principal);
                     docId = Option.get<Nat>(event.tokenId, 0);
                     value = 10;
                     comment = "Successful completion of the Motoko Basic course";
                 };
-                let response = await canister.updateDocHistory(args);
+                logger.append([prefix # "sendEvent: args created", Principal.toText(args.user), Nat.toText(args.docId), Nat8.toText(args.value), args.comment]);
+
+                let response = await canister.eventHandler(args);
+                logger.append([prefix # "sendEvent: updateDocHistory, done, check result"]);
+                // switch (response) {
+                //     case (#ok(res)) {
+                //         logger.append([prefix # "sendEvent: updateDocHistory done", "reputation increase by " # Nat8.toText(args.value)]);
+                //     };
+                //     case (#err(err)) {
+                //         logger.append([prefix # "sendEvent: updateDocHistory failed", err]);
+                //     };
+                // };
+                logger.append([prefix # "sendEvent: eventHandler method has been executed. Response: ", response]);
                 #ok([("updateDocHistory done", "reputation increase by " # Nat8.toText(args.value))]);
             };
             case (#AwaitingReputationUpdateEvent(_)) {

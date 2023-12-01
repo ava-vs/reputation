@@ -62,8 +62,9 @@ module {
         removeFromCollection : Event -> async Result.Result<[(Text, Text)], Text>;
     };
     public type InstantReputationUpdateEvent = actor {
-        updateDocHistory : DocHistoryArgs -> async Result.Result<[(Text, Text)], Text>;
-        testUpdateDocHistory : DocHistoryArgs -> async Text;
+        updateDocHistory : (DocHistoryArgs) -> async Result.Result<[(Text, Text)], Text>;
+        getMintingAccount : () -> async Principal;
+        eventHandler : (DocHistoryArgs) -> async Text;
     };
     public type AwaitingReputationUpdateEvent = actor {
         updateReputation : Event -> async Result.Result<[(Text, Text)], Text>;
