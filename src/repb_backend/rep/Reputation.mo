@@ -71,6 +71,8 @@ actor {
 
   type TransferFromError = Ledger.TransferFromError;
 
+  // Logger
+
   stable var state : Logger.State<Text> = Logger.new<Text>(0, null);
   let logger = Logger.Logger<Text>(state);
   let prefix = "[" # Int.toText(Time.now() / 1_000_000_000) # "] ";
@@ -123,27 +125,42 @@ actor {
   };
 
   // set reputation value for a given user in a specific branch
-  public func setUserReputation(user : Principal, branchId : Nat8, value : Nat) : async Types.Result<(Types.Account, Nat), Types.TransferBurnError> {
-    let sub = await createSubaccountByBranch(branchId);
-
-    let res = await awardToken({ owner = user; subaccount = ?Blob.fromArray(subaccountToNatArray(sub)) }, value);
+  func setUserReputation(user : Principal, branchId : Nat8, value : Nat) : async Types.Result<(Types.Account, Nat), Types.TransferBurnError> {
+    logger.append([prefix # " setUserReputation starts, calling method branchToSubaccount"]);
+    let sub = await branchToSubaccount(branchId);
+    logger.append([prefix # " setUserReputation: calling method awardToken"]);
+    let to : Ledger.Account = { owner = user; subaccount = ?Blob.toArray(sub) };
+    let res = await awardToken(to, value);
+    logger.append([prefix # " setUserReputation: awardToken result was received"]);
     switch (res) {
       case (#Ok(id)) {
-        ignore saveReputationChange(user, branchId, value);
+        logger.append([prefix # " setUserReputation: awardToken #Ok result was received: " # Nat.toText(id) # ", calling method saveReputationChange"]);
+        let saveRepChangeResult = saveReputationChange(user, branchId, value);
+        logger.append([prefix # " setUserReputation: calling getReputationByBranch"]);
         let bal = await getReputationByBranch(user, branchId);
+        logger.append([prefix # " setUserReputation: result for: " # Principal.toText(user) # ", branch = " # Nat8.toText(branchId)]);
+
         let res = switch (bal) {
-          case null { 0 };
-          case (?(branch, value)) { value };
+          case null {
+            logger.append([prefix # " setUserReputation: getReputationByBranch result balance is 0"]);
+            0;
+          };
+          case (?(branch, value)) {
+            logger.append([prefix # " setUserReputation: getReputationByBranch result was received: branch = " # Nat8.toText(branch) # ", value = " # Nat.toText(value)]);
+            value;
+          };
         };
         return #Ok({ owner = user; subaccount = ?sub }, res);
       };
       case (#Err(err)) {
+        logger.append([prefix # " ERROR: setUserReputation: awardToken #Err result was received"]);
         return #Err(err);
       };
     };
   };
 
   func saveReputationChange(user : Principal, branchId : Nat8, value : Nat) : Map.HashMap<Branch, Nat> {
+    logger.append([prefix # " saveReputationChange: user " # Principal.toText(user) # ", branch = " # Nat8.toText(branchId) # ", value = " # Nat.toText(value)]);
     let state = userReputation.get(user);
     let map = switch (state) {
       case null { Map.HashMap<Branch, Nat>(0, Nat8.equal, hashBranch) };
@@ -176,7 +193,7 @@ actor {
     // let default_acc = { owner = Principal.fromText("aaaaa-aa"); subaccount = null };
     var res = #Ok("Shared ");
     var sum = 0;
-    let mint_acc = await getMintingAccount();
+    let mint_acc = await getMintingAccountPrincipal();
     label one for ((user, entry) in userReputation.entries()) {
       if (Principal.equal(mint_acc, user)) continue one;
       var balance = 0;
@@ -253,53 +270,6 @@ actor {
     return #Ok(newDoc);
   };
 
-  /*
-    Test updateDocHistory
-  */
-
-  public func testUpdateDocHistory({
-    user : Principal;
-    docId : DocId;
-    value : Nat8;
-    comment : Text;
-  }) : async Text {
-    comment;
-  };
-
-  public func test2UpdateDocHistory() : async Types.Result<DocHistory, Types.CommonError> {
-    let user = Principal.fromText("aaaaa-aa");
-    let docId = 1;
-    let value : Nat8 = 1;
-    let comment = "Test comment";
-
-    let expectedResult : Types.Result<DocHistory, Types.CommonError> = #Ok({
-      docId = docId;
-      timestamp = Time.now();
-      changedBy = user;
-      value = value;
-      comment = comment;
-    });
-    let result = await updateDocHistory({
-      user = user;
-      docId = docId;
-      value = value;
-      comment = comment;
-    });
-
-    switch (result) {
-      case (#Ok(docHistory)) {
-        if (docHistory.docId == docId) {
-          return expectedResult; //"updateDocHistory test passed";
-        } else {
-          return #Err(#TemporarilyUnavailable); //"updateDocHistory test failed";
-        };
-      };
-      case (#Err(err)) {
-        return #Err(#TemporarilyUnavailable);
-      };
-    };
-  };
-
   //Method for event handling
 
   public func eventHandler({
@@ -331,7 +301,7 @@ actor {
   //Key method for update reputation based on document
   public func updateDocHistory({
     user : Principal;
-    docId : Nat;
+    docId : DocId;
     value : Nat8;
     comment : Text;
   }) : async Types.Result<DocHistory, Types.CommonError> {
@@ -361,8 +331,17 @@ actor {
     logger.append([prefix # " updateDocHistory: branch found by tag " # doc.tags[0] # " is " # Nat8.toText(branch) # " for user " # Principal.toText(user) # " with value " # Nat8.toText(value) # " and comment " # comment]);
 
     let res = await setUserReputation(user, branch, Nat8.toNat(value));
-    logger.append([prefix # " updateDocHistory: setUserReputation result "]);
-    #Ok(newDocHistory);
+    switch (res) {
+      case (#Ok(account, value)) {
+        logger.append([prefix # " updateDocHistory: setUserReputation result: account= " # Principal.toText(account.owner) # ", subaccount= " # Nat.toText(value)]);
+        #Ok(newDocHistory);
+      };
+      case (#Err(err)) {
+        logger.append([prefix # " updateDocHistory: setUserReputation result: error"]);
+        #Err(#TemporarilyUnavailable);
+      };
+    };
+    // #Ok(newDocHistory);
   };
 
   public func getDocHistory(docId : DocId) : async [DocHistory] {
@@ -456,17 +435,12 @@ actor {
   };
 
   /*
-Token Handling
-*/
-  let main_principal = Principal.fromText("36m6a-jxboo-zbvze-io5r2-gc64j-dcjoy-bovog-5dqvl-p66rb-ck3un-uqe");
+  Token Handling
+  */
 
   // null subaccount will be use as shared token wallet
   // 1 subaccount is incenitive subaccount
   // other subaccounts are branch ids
-  let pre_mint_account = {
-    owner = main_principal;
-    subaccount = null;
-  };
 
   // TODO get token consts from front-end
   let token_name = "aVa Shared reputation token";
@@ -495,18 +469,20 @@ Token Handling
     [byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)];
   };
 
-  public func createSubaccountByBranch(branch : Nat8) : async Subaccount {
+  public func branchToSubaccount(branch : Nat8) : async Subaccount {
+    //TODO change logic to create subaccount by branch accorging to the spec
+    logger.append([prefix # " Method branchToSubaccount starts for branch " # Nat8.toText(branch) # ", calling method beBytes"]);
     let bytes = beBytes(Nat32.fromNat(Nat8.toNat(branch)));
     let padding = Array.freeze(Array.init<Nat8>(28, 0 : Nat8));
     Blob.fromArray(Array.append(bytes, padding));
   };
 
-  public func nullSubaccount() : async Subaccount {
+  func nullSubaccount() : async Subaccount {
     Blob.fromArrayMut(Array.init(32, 0 : Nat8));
   };
 
-  public func addSubaccount(user : Principal, branch : Nat8) : async Account {
-    let sub = await createSubaccountByBranch(branch);
+  func addSubaccount(user : Principal, branch : Nat8) : async Account {
+    let sub = await branchToSubaccount(branch);
     let newAccount : Account = { owner = user; subaccount = ?sub };
   };
 
@@ -535,10 +511,10 @@ Token Handling
 
   // Logic part
 
-  public func getMintingAccount() : async Principal {
+  public func getMintingAccountPrincipal() : async Principal {
     let acc = await Ledger.icrc1_minting_account();
     switch (acc) {
-      case null main_principal;
+      case null Principal.fromText("aaaaa-aa");
       case (?account) account.owner;
     };
   };
@@ -548,7 +524,7 @@ Token Handling
   };
 
   public func userBalanceByBranch(user : Principal, branch : Nat8) : async Nat {
-    let sub = await createSubaccountByBranch(branch);
+    let sub = await branchToSubaccount(branch);
     let addSub : Ledger.Account = {
       owner = user;
       subaccount = ?subaccountToNatArray(sub);
@@ -557,19 +533,36 @@ Token Handling
   };
 
   // Increase reputation
-  // using pre_mint_account as from
 
-  public func awardToken(to : Types.Account, amount : Ledger.Tokens) : async Types.Result<TxIndex, TransferFromError> {
+  func subToText(blob : ?Blob) : Text {
+    switch (blob) {
+      case null { "null" };
+      case (?b) {
+        let text = Text.decodeUtf8(b);
+        switch (text) {
+          case null { "null" };
+          case (?t) { t };
+        };
+      };
+    };
+  };
+
+  func awardToken(to : Ledger.Account, amount : Ledger.Tokens) : async Types.Result<TxIndex, TransferFromError> {
+    logger.append([prefix # " Method awardToken starts"]);
     let memo : ?Ledger.Memo = null;
     let fee : ?Ledger.Tokens = null;
     let created_at_time : ?Ledger.Timestamp = ?Nat64.fromIntWrap(Time.now());
     let new_sub = switch (to.subaccount) {
       case null { [] };
-      case (?sub) { subaccountToNatArray(sub) };
+      case (?sub) { sub };
     };
     let acc : Ledger.Account = { owner = to.owner; subaccount = ?new_sub };
+    logger.append([prefix # " Method awardToken: calling method Ledger.icrc2_transfer_from \n"]);
+    logger.append([prefix # " awardToken: with args: " # Principal.toText(acc.owner) # ", amount = " # Nat.toText(amount)]);
+    let pre_mint_account = await getMintingAccountPrincipal();
+
     let res = await Ledger.icrc2_transfer_from({
-      from = pre_mint_account;
+      from = { owner = pre_mint_account; subaccount = null };
       to = acc;
       amount = amount;
       fee = fee;
@@ -578,7 +571,7 @@ Token Handling
     });
   };
 
-  public func sendToken(from : Ledger.Account, to : Ledger.Account, amount : Ledger.Tokens) : async Types.Result<TxIndex, TransferFromError> {
+  func sendToken(from : Ledger.Account, to : Ledger.Account, amount : Ledger.Tokens) : async Types.Result<TxIndex, TransferFromError> {
     let sender : ?Ledger.Subaccount = from.subaccount;
     let memo : ?Ledger.Memo = null;
     let fee : ?Ledger.Tokens = null;
@@ -605,9 +598,10 @@ Token Handling
     let fee : ?Ledger.Tokens = ?0;
     let created_at_time : ?Ledger.Timestamp = ?Nat64.fromIntWrap(Time.now());
     let a : Ledger.Tokens = amount;
+    let pre_mint_account = await getMintingAccountPrincipal();
     let res = await Ledger.icrc2_transfer_from({
       from = from;
-      to = pre_mint_account;
+      to = { owner = pre_mint_account; subaccount = null };
       amount = amount;
       fee = fee;
       memo = memo;
@@ -647,10 +641,11 @@ Token Handling
     let created_at_time : ?Ledger.Timestamp = ?Nat64.fromIntWrap(Time.now());
     let receiver : Ledger.Account = {
       owner = to.owner;
-      subaccount = ?(subaccountToNatArray(await createSubaccountByBranch(1)));
+      subaccount = ?(subaccountToNatArray(await branchToSubaccount(1)));
     };
+    let pre_mint_account = await getMintingAccountPrincipal();
     let res = await Ledger.icrc2_transfer_from({
-      from = pre_mint_account;
+      from = { owner = pre_mint_account; subaccount = null };
       to = receiver;
       amount = amount;
       fee = ?0;
@@ -707,6 +702,7 @@ Token Handling
     docHistoryArray := [];
   };
 
+  // Clearance methods
   public func clearTags() : async Bool {
     tagMap := TrieMap.TrieMap<Text, Branch>(Text.equal, Text.hash);
     true;
@@ -721,4 +717,49 @@ Token Handling
     docHistory := Map.HashMap<DocId, [DocHistory]>(0, Nat.equal, Hash.hash);
     true;
   };
+
+  public func clearOldestLogs(number : Nat) : async Bool {
+    logger.pop_buckets(number);
+    true;
+  };
 };
+
+/*
+
+    Test updateDocHistory
+
+   public func test2UpdateDocHistory() : async Types.Result<DocHistory, Types.CommonError> {
+    let user = Principal.fromText("aaaaa-aa");
+    let docId = 1;
+    let value : Nat8 = 1;
+    let comment = "Test comment";
+
+    let expectedResult : Types.Result<DocHistory, Types.CommonError> = #Ok({
+      docId = docId;
+      timestamp = Time.now();
+      changedBy = user;
+      value = value;
+      comment = comment;
+    });
+    let result = await updateDocHistory({
+      user = user;
+      docId = docId;
+      value = value;
+      comment = comment;
+    });
+
+    switch (result) {
+      case (#Ok(docHistory)) {
+        if (docHistory.docId == docId) {
+          return expectedResult; //"updateDocHistory test passed";
+        } else {
+          return #Err(#TemporarilyUnavailable); //"updateDocHistory test failed";
+        };
+      };
+      case (#Err(err)) {
+        return #Err(#TemporarilyUnavailable);
+      };
+    };
+  };
+
+*/
