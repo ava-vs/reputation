@@ -1,4 +1,5 @@
 import Result "mo:base/Result";
+import Nat8 "mo:base/Nat8";
 
 module {
 
@@ -38,6 +39,9 @@ module {
         comment : Text;
     };
 
+    public type Tag = Text;
+    public type Branch = Nat8;
+
     public type CreateEvent = actor {
         creation : Event -> async Result.Result<[(Text, Text)], Text>;
     };
@@ -63,6 +67,7 @@ module {
     };
     public type InstantReputationUpdateEvent = actor {
         updateDocHistory : (DocHistoryArgs) -> async Result.Result<[(Text, Text)], Text>;
+        getTags : () -> async [(Tag, Branch)];
         getMintingAccount : () -> async Principal;
         eventHandler : (DocHistoryArgs) -> async Text;
     };

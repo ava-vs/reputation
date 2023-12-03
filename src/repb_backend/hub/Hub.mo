@@ -61,6 +61,12 @@ actor class Hub() {
         Buffer.toArray(result);
     };
 
+    public func getTags() : async [(E.Tag, E.Branch)] {
+        let rep_canister : E.InstantReputationUpdateEvent = actor (rep_canister_id);
+        let tags = await rep_canister.getTags();
+        tags;
+    };
+
     public func subscribe(subscriber : Subscriber) : async () {
         let principal = subscriber.callback;
         //TODO check the subscriber for the required methods
@@ -166,7 +172,6 @@ actor class Hub() {
     func sendEvent(event : E.Event, canisterId : Principal) : async Result.Result<[(Text, Text)], Text> {
         logger.append([prefix # "Starting method sendEvent"]);
         let subscriber_canister_id = Principal.toText(canisterId);
-
         switch (event.eventType) {
             case (#CreateEvent(_)) {
                 let canister : E.CreateEvent = actor (subscriber_canister_id);
