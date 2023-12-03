@@ -1,5 +1,7 @@
 import Result "mo:base/Result";
 import Nat8 "mo:base/Nat8";
+import Bool "mo:base/Bool";
+import Text "mo:base/Text";
 
 module {
 
@@ -23,17 +25,26 @@ module {
         #Unknown;
     };
 
+    public type Metadata = {
+        #Nat : Nat;
+        #Int : Int;
+        #Text : Text;
+        #Blob : Blob;
+        #Bool : Bool;
+    };
+
     public type Event = {
         eventType : EventName;
         topics : [EventField];
         tokenId : ?Nat;
         owner : ?Principal;
-        metadata : ?[(Text, Blob)];
+        metadata : ?[(Text, Metadata)];
         creationDate : ?Int;
     };
 
     public type DocHistoryArgs = {
         user : Principal;
+        caller_doctoken_canister_id : Text;
         docId : Nat;
         value : Nat8;
         comment : Text;

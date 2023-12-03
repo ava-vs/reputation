@@ -16,6 +16,7 @@ import Time "mo:base/Time";
 import E "./EventTypes";
 import Types "./Types";
 import Logger "utils/Logger";
+import Utils "utils/Utils";
 
 actor class Hub() {
     type EventField = E.EventField;
@@ -77,7 +78,7 @@ actor class Hub() {
         eventHub.subscribers.delete(principal);
     };
 
-    public func emitEvent(event : E.Event) : async [Subscriber] {
+    public shared ({ caller }) func emitEvent(event : E.Event) : async [Subscriber] {
         // TODO save publisher+his doctoken to hub
         logger.append([prefix # "Starting method emitEvent"]);
         eventHub.events := Array.append(eventHub.events, [event]);
@@ -90,7 +91,7 @@ actor class Hub() {
 
             if (isEventMatchFilter(event, subscriber.filter)) {
                 logger.append([prefix # "emitEvent: event matched"]);
-                let response = await sendEvent(event, subscriber.callback);
+                let response = await sendEvent(event, Principal.toText(caller), subscriber.callback);
             };
 
         };
@@ -157,8 +158,9 @@ actor class Hub() {
         let args : E.DocHistoryArgs = {
             user = Principal.fromText("bs3e6-4i343-voosn-wogd7-6kbdg-mctak-hn3ws-k7q7f-fye2e-uqeyh-yae");
             docId = 1;
+            caller_doctoken_canister_id = "aaaaa-aa";
             value = 10;
-            comment = "Successful completion of the Motoko Basic course";
+            comment = "Test passed";
         };
         let response = await canister.getMintingAccount();
         if (flag == 1) return "test 1 done";
@@ -169,7 +171,7 @@ actor class Hub() {
         "unknown";
     };
 
-    func sendEvent(event : E.Event, canisterId : Principal) : async Result.Result<[(Text, Text)], Text> {
+    func sendEvent(event : E.Event, caller_doctoken_canister_id : Text, canisterId : Principal) : async Result.Result<[(Text, Text)], Text> {
         logger.append([prefix # "Starting method sendEvent"]);
         let subscriber_canister_id = Principal.toText(canisterId);
         switch (event.eventType) {
@@ -185,25 +187,18 @@ actor class Hub() {
                 logger.append([prefix # "sendEvent: case #InstantReputationUpdateEvent, start updateDocHistory"]);
                 let canister : E.InstantReputationUpdateEvent = actor (subscriber_canister_id);
                 logger.append([prefix # "sendEvent: canister created"]);
-
+                let value = Utils.getValueFromMetadata("reputation_value", event.metadata);
+                let comment = Utils.getValueFromMetadata("reputation_comment", event.metadata);
                 let args : E.DocHistoryArgs = {
                     user = Option.get<Principal>(event.owner, default_principal);
+                    caller_doctoken_canister_id = caller_doctoken_canister_id;
                     docId = Option.get<Nat>(event.tokenId, 0);
-                    value = 10;
-                    comment = "Successful completion of the Motoko Basic course";
+                    value = Utils.getNatValueFromMetadata(value, event.metadata);
+                    comment = Utils.getTextValueFromMetadata(comment, event.metadata);
                 };
                 logger.append([prefix # "sendEvent: args created", Principal.toText(args.user), Nat.toText(args.docId), Nat8.toText(args.value), args.comment]);
 
                 let response = await canister.eventHandler(args);
-                logger.append([prefix # "sendEvent: updateDocHistory, done, check result"]);
-                // switch (response) {
-                //     case (#ok(res)) {
-                //         logger.append([prefix # "sendEvent: updateDocHistory done", "reputation increase by " # Nat8.toText(args.value)]);
-                //     };
-                //     case (#err(err)) {
-                //         logger.append([prefix # "sendEvent: updateDocHistory failed", err]);
-                //     };
-                // };
                 logger.append([prefix # "sendEvent: eventHandler method has been executed. Response: ", response]);
                 #ok([("updateDocHistory done", "reputation increase by " # Nat8.toText(args.value))]);
             };

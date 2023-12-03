@@ -275,6 +275,7 @@ actor {
   public func eventHandler({
     user : Principal;
     docId : Nat;
+    caller_doctoken_canister_id : Text;
     value : Nat8;
     comment : Text;
   }) : async Text {
@@ -301,13 +302,14 @@ actor {
   //Key method for update reputation based on document
   public func updateDocHistory({
     user : Principal;
+    caller_doctoken_canister_id : Text;
     docId : DocId;
     value : Nat8;
     comment : Text;
   }) : async Types.Result<DocHistory, Types.CommonError> {
     logger.append([prefix # " Method updateDocHistory starts, checking document"]);
 
-    let doc = switch (checkDocument(docId)) {
+    let doc = switch (checkDocument(caller_doctoken_canister_id, docId)) {
       case (#Err(err)) {
         logger.append([prefix # " updateDocHistory: document check failed"]);
         return #Err(err);
@@ -357,13 +359,32 @@ actor {
     res;
   };
 
-  func checkDocument(docId : DocId) : Types.Result<Document, Types.CommonError> {
-    let checkDocument = Array.find<Document>(documents, func doc = Nat.equal(docId, doc.docId));
+  // Check document by canister id and docId
+  func checkDocument(canisterId : Text, docId : DocId) : Types.Result<Document, Types.CommonError> {
+    // TODO call canister and get document
+
+    let checkDocument = getAndCheckDocument(canisterId, docId);
+    //Array.find<Document>(documents, func doc = Nat.equal(docId, doc.docId));
     let doc = switch (checkDocument) {
       case null {
-        #Err(#NotFound { message = "No document found by id "; docId = docId });
+        #Err(#NotFound { message = "No document found by canister id " # canisterId; docId = docId });
       };
       case (?doc) { #Ok(doc) };
+    };
+  };
+
+  func getAndCheckDocument(canisterId : Text, docId : DocId) : ?Document {
+    let canister : Doctoken = actor (canisterId);
+    let doc = await canister.getDocumentById(docId);
+    switch (doc) {
+      case null {
+        logger.append([prefix # " getAndCheckDocument: document not found by id " # Nat.toText(docId)]);
+        null;
+      };
+      case (?doc) {
+        logger.append([prefix # " getAndCheckDocument: document found by id " # Nat.toText(docId)]);
+        doc;
+      };
     };
   };
 

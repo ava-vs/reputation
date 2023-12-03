@@ -1,51 +1,60 @@
-  import Map "mo:base/HashMap";
-  import Principal "mo:base/Principal";
-  import Buffer "mo:base/Buffer";
-  // import Transfer "mo:icrc1/ICRC1/Transfer";
+import Map "mo:base/HashMap";
+import Principal "mo:base/Principal";
+import Buffer "mo:base/Buffer";
 
-    module {
-      public type DocId = Nat;
+module {
+  public type DocId = Nat;
 
-      public type Document = {
-      docId : DocId;
-      tags : [ Text ];
-      content : Text;
-      imageLink : Text; //(data url or link to asset canister)
+  public type Document = {
+    tokenId : DocId;
+    owner : Principal;
+    metadata : [(Text, Metadata)];
+  };
 
-      };
+  public type Metadata = {
+    #Nat : Nat;
+    #Int : Int;
+    #Text : Text;
+    #Blob : Blob;
+    #Bool : Bool;
+  };
 
-      // public type UserDocuments = Map.HashMap<Principal, [DocId]>;
+  public type Doctoken = actor {
+    getDocumentById : (DocId) -> async ?Document;
+  };
 
-      public type Branch = Nat8;
+  // public type UserDocuments = Map.HashMap<Principal, [DocId]>;
 
-      public type DocumentHistory = {
-          docId : DocId;
-          timestamp : Int;
-          changedBy : Principal;
-          value : Nat8;
-          comment : Text;
-      };
+  public type Branch = Nat8;
 
-      public type Tag = Text;
+  public type DocumentHistory = {
+    docId : DocId;
+    timestamp : Int;
+    changedBy : Principal;
+    value : Nat8;
+    comment : Text;
+  };
 
-      public type ApiError = {
-      #Unauthorized;
-      #InvalidTokenId;
-      #ZeroAddress;
-      #NoNFT;
-      #Other;
-    };
+  public type Tag = Text;
 
-    public type Result<S, E> = {
-      #Ok : S;
-      #Err : E;
-    };
+  public type ApiError = {
+    #Unauthorized;
+    #InvalidTokenId;
+    #ZeroAddress;
+    #NoNFT;
+    #Other;
+  };
 
-    public type Change = (Principal, Branch, Int);
+  public type Result<S, E> = {
+    #Ok : S;
+    #Err : E;
+  };
 
-    public type ChangeResult = Result<Change, ApiError>;
+  public type Change = (Principal, Branch, Int);
 
-    public type SharedResult = Result<Change, ApiError>;
+  public type ChangeResult = Result<Change, ApiError>;
+
+  public type SharedResult = Result<Change, ApiError>;
 
   public type Account = { owner : Principal; subaccount : ?Subaccount };
   public type Subaccount = Blob;
@@ -112,7 +121,7 @@
     #BadFee : { expected_fee : Tokens };
     #TemporarilyUnavailable;
     #GenericError : { error_code : Nat; message : Text };
-    #NotFound : { message : Text; docId : DocId }
+    #NotFound : { message : Text; docId : DocId };
   };
 
   public type TransferError = DeduplicationError or CommonError or {
@@ -128,11 +137,11 @@
   };
 
   public type BurnError = CommonError or {
-    #WrongBranch : { current_branch : Nat8; target_branch : Nat8};
+    #WrongBranch : { current_branch : Nat8; target_branch : Nat8 };
     #WrongDocument : { current_branch : Nat8; document : DocId };
     #InsufficientReputation : { current_branch : Nat8; balance : Tokens };
     #DocumentReputationReductionLimitReached : { document : DocId };
   };
 
   public type TransferBurnError = TransferFromError or BurnError;
-}
+};
