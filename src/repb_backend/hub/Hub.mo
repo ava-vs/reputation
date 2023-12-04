@@ -17,6 +17,7 @@ import E "./EventTypes";
 import Types "./Types";
 import Logger "utils/Logger";
 import Utils "utils/Utils";
+import List "utils/List";
 
 actor class Hub() {
     type EventField = E.EventField;
@@ -48,6 +49,8 @@ actor class Hub() {
     let default_principal : Principal = Principal.fromText("aaaaa-aa");
     let rep_canister_id = "aoxye-tiaaa-aaaal-adgnq-cai";
 
+    // TODO make eventHub stable
+
     var eventHub = {
         var events : [E.Event] = [];
         subscribers : HashMap.HashMap<Principal, Subscriber> = HashMap.HashMap<Principal, Subscriber>(10, Principal.equal, Principal.hash);
@@ -69,9 +72,8 @@ actor class Hub() {
     };
 
     public func subscribe(subscriber : Subscriber) : async () {
-        let principal = subscriber.callback;
         //TODO check the subscriber for the required methods
-        eventHub.subscribers.put(principal, subscriber);
+        eventHub.subscribers.put(subscriber.callback, subscriber);
     };
 
     public func unsubscribe(principal : Principal) : async () {
@@ -189,18 +191,26 @@ actor class Hub() {
                 logger.append([prefix # "sendEvent: canister created"]);
                 let value = Utils.getValueFromMetadata("reputation_value", event.metadata);
                 let comment = Utils.getValueFromMetadata("reputation_comment", event.metadata);
+                let tag = Utils.getValueFromMetadata("reputation_tag", event.metadata);
                 let args : E.DocHistoryArgs = {
                     user = Option.get<Principal>(event.owner, default_principal);
                     caller_doctoken_canister_id = caller_doctoken_canister_id;
                     docId = Option.get<Nat>(event.tokenId, 0);
-                    value = Utils.getNatValueFromMetadata(value, event.metadata);
-                    comment = Utils.getTextValueFromMetadata(comment, event.metadata);
+                    value = Utils.getNat8ValueFromMetadata(value);
+                    comment = Utils.getTextValueFromMetadata(comment);
                 };
                 logger.append([prefix # "sendEvent: args created", Principal.toText(args.user), Nat.toText(args.docId), Nat8.toText(args.value), args.comment]);
 
+                // Call eventHandler method from subscriber canister
                 let response = await canister.eventHandler(args);
-                logger.append([prefix # "sendEvent: eventHandler method has been executed. Response: ", response]);
-                #ok([("updateDocHistory done", "reputation increase by " # Nat8.toText(args.value))]);
+                logger.append([prefix # "sendEvent: eventHandler method has been executed. Response: " # response]);
+                if (response == "Event InstantReputationUpdateEvent was handled") {
+                    return #ok([("updateDocHistory done", "reputation increase by " # Nat8.toText(args.value))]);
+                } else {
+                    return #err("updateDocHistory failed");
+                };
+                // logger.append([prefix # "sendEvent: eventHandler method has been executed. Response: ", response]);
+                // #ok([("updateDocHistory done", "reputation increase by " # Nat8.toText(args.value))]);
             };
             case (#AwaitingReputationUpdateEvent(_)) {
                 let canister : E.AwaitingReputationUpdateEvent = actor (subscriber_canister_id);
@@ -312,5 +322,24 @@ actor class Hub() {
     //     return #Err(#TemporarilyUnavailable);
     // };
 
-    // TODO add postupgrade
+    stable var eventState : [E.Event] = [];
+    stable var eventSubscribers : [Subscriber] = [];
+
+    system func preupgrade() {
+        eventState := eventHub.events;
+        eventSubscribers := Iter.toArray(eventHub.subscribers.vals());
+    };
+    system func postupgrade() {
+        eventHub.events := eventState;
+        eventState := [];
+        for (subscriber in eventSubscribers.vals()) {
+            eventHub.subscribers.put(subscriber.callback, subscriber);
+        };
+        eventSubscribers := [];
+    };
+
+    public func clearOldestLogs(number : Nat) : async Bool {
+        logger.pop_buckets(number);
+        true;
+    };
 };

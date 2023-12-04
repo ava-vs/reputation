@@ -7,6 +7,7 @@ module {
 
   public type Document = {
     tokenId : DocId;
+    tags : [Tag];
     owner : Principal;
     metadata : [(Text, Metadata)];
   };

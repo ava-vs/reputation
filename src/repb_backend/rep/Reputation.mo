@@ -224,7 +224,7 @@ actor {
     let docIdList = Option.get(userDocumentMap.get(user), []);
     var result = Buffer.Buffer<Document>(1);
     label one for (documentId in docIdList.vals()) {
-      let document = Array.find<Document>(documents, func doc = Nat.equal(documentId, doc.docId));
+      let document = Array.find<Document>(documents, func doc = Nat.equal(documentId, doc.tokenId));
       switch (document) {
         case null continue one;
         case (?d) result.add(d);
@@ -234,7 +234,7 @@ actor {
   };
 
   public func getDocumentById(id : DocId) : async Types.Result<Document, Text> {
-    let document = Array.find<Document>(documents, func doc = Nat.equal(id, doc.docId));
+    let document = Array.find<Document>(documents, func doc = Nat.equal(id, doc.tokenId));
     switch (document) {
       case null #Err("No documents found by id " # Nat.toText(id));
       case (?doc) #Ok(doc);
@@ -258,10 +258,10 @@ actor {
     let existBranches = Buffer.fromArray<Tag>(document.tags);
     newTags.append(existBranches);
     let newDoc = {
-      docId = nextId;
+      tokenId = nextId;
       tags = Buffer.toArray(newTags);
-      content = document.content;
-      imageLink = document.imageLink;
+      owner = user;
+      metadata = [(document.imageLink, #Text(document.imageLink))];
     };
     documents := Array.append(documents, [newDoc]);
     let newList = Array.append(docList, [nextId]);
@@ -283,6 +283,7 @@ actor {
 
     let result = await updateDocHistory({
       user = user;
+      caller_doctoken_canister_id = caller_doctoken_canister_id;
       docId = docId;
       value = value;
       comment = comment;
@@ -309,7 +310,7 @@ actor {
   }) : async Types.Result<DocHistory, Types.CommonError> {
     logger.append([prefix # " Method updateDocHistory starts, checking document"]);
 
-    let doc = switch (checkDocument(caller_doctoken_canister_id, docId)) {
+    let doc = switch (await checkDocument(caller_doctoken_canister_id, docId)) {
       case (#Err(err)) {
         logger.append([prefix # " updateDocHistory: document check failed"]);
         return #Err(err);
@@ -360,12 +361,12 @@ actor {
   };
 
   // Check document by canister id and docId
-  func checkDocument(canisterId : Text, docId : DocId) : Types.Result<Document, Types.CommonError> {
+  func checkDocument(canisterId : Text, docId : DocId) : async Types.Result<Document, Types.CommonError> {
     // TODO call canister and get document
 
-    let checkDocument = getAndCheckDocument(canisterId, docId);
+    let check = await getAndCheckDocument(canisterId, docId);
     //Array.find<Document>(documents, func doc = Nat.equal(docId, doc.docId));
-    let doc = switch (checkDocument) {
+    let doc = switch (check) {
       case null {
         #Err(#NotFound { message = "No document found by canister id " # canisterId; docId = docId });
       };
@@ -373,8 +374,8 @@ actor {
     };
   };
 
-  func getAndCheckDocument(canisterId : Text, docId : DocId) : ?Document {
-    let canister : Doctoken = actor (canisterId);
+  func getAndCheckDocument(canisterId : Text, docId : DocId) : async ?Document {
+    let canister : Types.Doctoken = actor (canisterId);
     let doc = await canister.getDocumentById(docId);
     switch (doc) {
       case null {
@@ -383,7 +384,7 @@ actor {
       };
       case (?doc) {
         logger.append([prefix # " getAndCheckDocument: document found by id " # Nat.toText(docId)]);
-        doc;
+        ?doc;
       };
     };
   };
@@ -406,10 +407,10 @@ actor {
       tags.add(getTagByBranch(item));
     };
     let newDoc = {
-      docId = 0;
+      owner = user;
+      tokenId = 0;
       tags = Buffer.toArray(tags);
-      content = content;
-      imageLink = imageLink;
+      metadata = [("content", #Text(content)), ("imageLink", #Text(imageLink))];
     };
   };
 

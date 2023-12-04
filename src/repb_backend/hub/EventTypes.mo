@@ -27,6 +27,7 @@ module {
 
     public type Metadata = {
         #Nat : Nat;
+        #Nat8 : Nat8;
         #Int : Int;
         #Text : Text;
         #Blob : Blob;
