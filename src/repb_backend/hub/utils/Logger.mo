@@ -141,7 +141,7 @@ module {
       };
       {
         start_index = if (s.start_index > from) { s.start_index } else { from };
-        messages = buf.toArray();
+        messages = Buffer.toArray(buf);
       }
     };
   
@@ -202,7 +202,7 @@ module {
               Array.tabulate(Nat.sub(j+1, i), func(x: Nat): Nat { x + i })))));
       };
     };
-    let view_test = Suite.suite("view", view_tests.toArray());
+    let view_test = Suite.suite("view", Buffer.toArray(view_tests));
 
     let view_tests_after_pop = Buffer.Buffer<Suite>(0);
     for (k in Iter.range(1,2)) {
@@ -220,7 +220,7 @@ module {
         }
       }
     };
-    let view_test_after_pop = Suite.suite("view", view_tests_after_pop.toArray());
+    let view_test_after_pop = Suite.suite("view", Buffer.toArray(view_tests_after_pop));
 
     Suite.suite("Test Logger", [ to_array_test, append_test, view_test, view_test_after_pop ])
   }
