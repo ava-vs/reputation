@@ -34,21 +34,23 @@ module {
         #Bool : Bool;
     };
 
+    public type ReputationChangeRequest = {
+        user : Principal;
+        reviewer : ?Principal;
+        value : ?Nat;
+        category : Text;
+        timestamp : Nat;
+        source : (Text, Nat); // (doctoken_canisterId, documentId)
+        comment : ?Text;
+        metadata : ?[(Text, Metadata)];
+    };
+
     public type Event = {
         eventType : EventName;
         topics : [EventField];
-        tokenId : ?Nat;
-        owner : ?Principal;
-        metadata : ?[(Text, Metadata)];
-        creationDate : ?Int;
-    };
-
-    public type DocHistoryArgs = {
-        user : Principal;
-        caller_doctoken_canister_id : Text;
-        docId : Nat;
-        value : Nat8;
-        comment : Text;
+		details : ?Text;
+        reputation_change : ReputationChangeRequest;
+		sender_hash : ?Text;
     };
 
     public type Tag = Text;
@@ -78,10 +80,10 @@ module {
         removeFromCollection : Event -> async Result.Result<[(Text, Text)], Text>;
     };
     public type InstantReputationUpdateEvent = actor {
-        updateDocHistory : (DocHistoryArgs) -> async Result.Result<[(Text, Text)], Text>;
+        // updateDocHistory : (DocHistoryArgs) -> async Result.Result<[(Text, Text)], Text>;
         getTags : () -> async [(Tag, Branch)];
         getMintingAccount : () -> async Principal;
-        eventHandler : (DocHistoryArgs) -> async Text;
+        eventHandler : (ReputationChangeRequest) -> async Text;
     };
     public type AwaitingReputationUpdateEvent = actor {
         updateReputation : Event -> async Result.Result<[(Text, Text)], Text>;

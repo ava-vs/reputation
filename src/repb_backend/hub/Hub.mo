@@ -11,13 +11,12 @@ import Order "mo:base/Order";
 import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
-import Time "mo:base/Time";
 
 import E "./EventTypes";
 import Types "./Types";
+import List "utils/List";
 import Logger "utils/Logger";
 import Utils "utils/Utils";
-import List "utils/List";
 
 actor class Hub() {
     type EventField = E.EventField;
@@ -38,7 +37,7 @@ actor class Hub() {
 
     stable var state : Logger.State<Text> = Logger.new<Text>(0, null);
     let logger = Logger.Logger<Text>(state);
-    let prefix = "[" # Int.toText(Time.now() / 1_000_000_000) # "] ";
+    let prefix = Utils.timestampToDate() # " ";
 
     // For further batch handling
     var batchMakingDurationNano : Int = 1_000_000_000;
@@ -48,6 +47,7 @@ actor class Hub() {
 
     let default_principal : Principal = Principal.fromText("aaaaa-aa");
     let rep_canister_id = "aoxye-tiaaa-aaaal-adgnq-cai";
+    let default_doctoken_canister_id = "h5x3q-hyaaa-aaaal-adg6q-cai";
 
     // TODO make eventHub stable
 
@@ -85,20 +85,22 @@ actor class Hub() {
         logger.append([prefix # "Starting method emitEvent"]);
         eventHub.events := Array.append(eventHub.events, [event]);
 
-        let subscribersArray = Iter.toArray(eventHub.subscribers.vals());
-
+        let buffer = Buffer.Buffer<Subscriber>(0);
         for (subscriber in eventHub.subscribers.vals()) {
             // TODO check subscriber
             logger.append([prefix # "emitEvent: check subscriber"]);
 
             if (isEventMatchFilter(event, subscriber.filter)) {
                 logger.append([prefix # "emitEvent: event matched"]);
-                let response = await sendEvent(event, Principal.toText(caller), subscriber.callback);
+                buffer.add(subscriber);
+                var canister_doctoken = Principal.toText(caller);
+                if (Principal.fromText("2vxsx-fae") == caller) canister_doctoken := default_doctoken_canister_id;
+                let response = await sendEvent(event.reputation_change.reviewer, event, canister_doctoken, subscriber.callback);
             };
 
         };
 
-        return subscribersArray;
+        return Buffer.toArray(buffer);
     };
 
     func eventNameToText(eventName : EventName) : Text {
@@ -123,6 +125,7 @@ actor class Hub() {
     };
 
     func isEventMatchFilter(event : E.Event, filter : EventFilter) : Bool {
+
         logger.append([prefix # "Starting method isEventMatchFilter"]);
 
         logger.append([prefix # "isEventMatchFilter: Checking event type", eventNameToText(Option.get<E.EventName>(filter.eventType, #Unknown))]);
@@ -155,25 +158,27 @@ actor class Hub() {
 
     // TEST sendEvent
 
-    public func testSendEvent(flag : Nat) : async Text {
-        let canister : E.InstantReputationUpdateEvent = actor ("aoxye-tiaaa-aaaal-adgnq-cai");
-        let args : E.DocHistoryArgs = {
-            user = Principal.fromText("bs3e6-4i343-voosn-wogd7-6kbdg-mctak-hn3ws-k7q7f-fye2e-uqeyh-yae");
-            docId = 1;
-            caller_doctoken_canister_id = "aaaaa-aa";
-            value = 10;
-            comment = "Test passed";
-        };
-        let response = await canister.getMintingAccount();
-        if (flag == 1) return "test 1 done";
-        if (flag == 0) {
-            return "ok";
-        };
-        if (flag == 3) { return Principal.toText(response) };
-        "unknown";
-    };
+    // public func testSendEvent(flag : Nat) : async Text {
+    //     let canister : E.InstantReputationUpdateEvent = actor ("aoxye-tiaaa-aaaal-adgnq-cai");
+    //     let args : E.DocHistoryArgs = {
+    //         reviewer = Principal.fromText("bs3e6-4i343-voosn-wogd7-6kbdg-mctak-hn3ws-k7q7f-fye2e-uqeyh-yae");
+    //         user = Principal.fromText("bs3e6-4i343-voosn-wogd7-6kbdg-mctak-hn3ws-k7q7f-fye2e-uqeyh-yae");
+    //         docId = 1;
+    //         caller_doctoken_canister_id = "aaaaa-aa";
+    //         value = 10;
+    //         comment = "Test passed";
+    //     };
+    //     let response = await canister.getMintingAccount();
+    //     if (flag == 1) return "test 1 done";
+    //     if (flag == 0) {
+    //         return "ok";
+    //     };
+    //     if (flag == 3) { return Principal.toText(response) };
+    //     "unknown";
+    // };
 
-    func sendEvent(event : E.Event, caller_doctoken_canister_id : Text, canisterId : Principal) : async Result.Result<[(Text, Text)], Text> {
+    func sendEvent(reviwer : ?Principal, event : E.Event, caller_doctoken_canister_id : Text, canisterId : Principal) : async Result.Result<[(Text, Text)], Text> {
+
         logger.append([prefix # "Starting method sendEvent"]);
         let subscriber_canister_id = Principal.toText(canisterId);
         switch (event.eventType) {
@@ -189,28 +194,25 @@ actor class Hub() {
                 logger.append([prefix # "sendEvent: case #InstantReputationUpdateEvent, start updateDocHistory"]);
                 let canister : E.InstantReputationUpdateEvent = actor (subscriber_canister_id);
                 logger.append([prefix # "sendEvent: canister created"]);
-                let value = Utils.getValueFromMetadata("reputation_value", event.metadata);
-                let comment = Utils.getValueFromMetadata("reputation_comment", event.metadata);
-                let tag = Utils.getValueFromMetadata("reputation_tag", event.metadata);
-                let args : E.DocHistoryArgs = {
-                    user = Option.get<Principal>(event.owner, default_principal);
-                    caller_doctoken_canister_id = caller_doctoken_canister_id;
-                    docId = Option.get<Nat>(event.tokenId, 0);
-                    value = Utils.getNat8ValueFromMetadata(value);
-                    comment = Utils.getTextValueFromMetadata(comment);
-                };
-                logger.append([prefix # "sendEvent: args created", Principal.toText(args.user), Nat.toText(args.docId), Nat8.toText(args.value), args.comment]);
+                let args : E.ReputationChangeRequest = event.reputation_change;
+                let rep_value = Nat.toText(Option.get<Nat>(args.value, 0));
+                logger.append([
+                    prefix # "sendEvent: args created, user=" # Principal.toText(args.user) # " token Id =" # Nat.toText(args.source.1)
+                    # " caller_doctoken_canister_id = " # caller_doctoken_canister_id # " value = " # rep_value # " comment " # Option.get<Text>(args.comment, "null")
+                ]);
 
                 // Call eventHandler method from subscriber canister
                 let response = await canister.eventHandler(args);
                 logger.append([prefix # "sendEvent: eventHandler method has been executed. Response: " # response]);
                 if (response == "Event InstantReputationUpdateEvent was handled") {
-                    return #ok([("updateDocHistory done", "reputation increase by " # Nat8.toText(args.value))]);
+                    return #ok([(
+                        "updateDocHistory done",
+                        "reputation of " # Principal.toText(args.user)
+                        # " increased by " # rep_value,
+                    )]);
                 } else {
                     return #err("updateDocHistory failed");
                 };
-                // logger.append([prefix # "sendEvent: eventHandler method has been executed. Response: ", response]);
-                // #ok([("updateDocHistory done", "reputation increase by " # Nat8.toText(args.value))]);
             };
             case (#AwaitingReputationUpdateEvent(_)) {
                 let canister : E.AwaitingReputationUpdateEvent = actor (subscriber_canister_id);
@@ -223,55 +225,9 @@ actor class Hub() {
         };
     };
 
-    // public func addEventListener(filter : EventFilter, endpoint : RemoteCallEndpoint) : async () {
-    //     let existingPair = Array.find<FilterListenersPair>(
-    //         listeners,
-    //         func(pair) {
-    //             equalEventFilters(pair.filter, filter);
-    //         },
-    //     );
-
-    //     switch (existingPair) {
-    //         case (?pair) {
-    //             let updatedListeners = Array.append(pair.listeners, [endpoint]);
-    //             let updatedPair = {
-    //                 filter = filter;
-    //                 listeners = updatedListeners;
-    //             };
-    //             let newListenersPairs = Array.map<FilterListenersPair, FilterListenersPair>(
-    //                 listeners,
-    //                 func(p) {
-    //                     if (equalEventFilters(p.filter, pair.filter)) {
-    //                         updatedPair;
-    //                     } else { p };
-    //                 },
-    //             );
-    //             listeners := newListenersPairs;
-    //         };
-    //         case null {
-    //             listeners := Array.append(listeners, [{ filter = filter; listeners = [endpoint] }]);
-    //         };
-    //     };
-    // };
-
-    // public func removeEventListener(filter : EventFilter, endpoint : RemoteCallEndpoint) : async () {
-    //     listeners := Array.filter<FilterListenersPair>(
-    //         listeners,
-    //         func(pair : FilterListenersPair) : Bool {
-    //             if (equalEventFilters(pair.filter, filter)) {
-    //                 let newListeners = Array.filter<RemoteCallEndpoint>(
-    //                     pair.listeners,
-    //                     func(ep : RemoteCallEndpoint) : Bool {
-    //                         ep.canisterId != endpoint.canisterId or ep.methodName != endpoint.methodName;
-    //                     },
-    //                 );
-    //                 return Array.size(newListeners) > 0;
-    //             } else {
-    //                 return true;
-    //             };
-    //         },
-    //     );
-    // };
+    public func getAllSubscribers() : async [Subscriber] {
+        Iter.toArray(eventHub.subscribers.vals());
+    };
 
     public func getSubscribers(filter : EventFilter) : async [Subscriber] {
         let subscribers = Iter.toArray(eventHub.subscribers.vals());
