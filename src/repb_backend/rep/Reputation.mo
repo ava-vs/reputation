@@ -17,8 +17,9 @@ import Principal "mo:base/Principal";
 import Text "mo:base/Text";
 import Time "mo:base/Time";
 import TrieMap "mo:base/TrieMap";
-
+// TODO move Tils to rep repository
 import Logger "../hub/utils/Logger";
+import Utils "../hub/utils/Utils";
 import Types "./Types";
 
 actor {
@@ -75,8 +76,7 @@ actor {
 
   stable var state : Logger.State<Text> = Logger.new<Text>(0, null);
   let logger = Logger.Logger<Text>(state);
-  let prefix = "[" # Int.toText(Time.now() / 1_000_000_000) # "] ";
-
+  var prefix = Utils.timestampToDate();
   let hashBranch = func(x : Branch) : Nat32 {
     return Nat32.fromNat(Nat8.toNat(x * 7));
   };
@@ -95,6 +95,7 @@ actor {
   var userReputation = Map.HashMap<Principal, Map.HashMap<Branch, Nat>>(1, Principal.equal, Principal.hash);
   // map tag : branchId
   var tagMap = TrieMap.TrieMap<Text, Branch>(Text.equal, Text.hash);
+  var tagCifer = TrieMap.TrieMap<Text, Text>(Text.equal, Text.hash);
   var userSharedReputation = Map.HashMap<Principal, Map.HashMap<Branch, Nat>>(1, Principal.equal, Principal.hash);
 
   public func viewLogs(end : Nat) : async [Text] {
@@ -125,11 +126,14 @@ actor {
   };
 
   // set reputation value for a given user in a specific branch
-  func setUserReputation(user : Principal, branchId : Nat8, value : Nat) : async Types.Result<(Types.Account, Nat), Types.TransferBurnError> {
+  func setUserReputation(reviewer : Principal, user : Principal, branchId : Nat8, value : Nat) : async Types.Result<(Types.Account, Nat), Types.TransferBurnError> {
     logger.append([prefix # " setUserReputation starts, calling method branchToSubaccount"]);
     let sub = await branchToSubaccount(branchId);
     logger.append([prefix # " setUserReputation: calling method awardToken"]);
     let to : Ledger.Account = { owner = user; subaccount = ?Blob.toArray(sub) };
+
+    // TODO decrease reviewer distributed reputation
+
     let res = await awardToken(to, value);
     logger.append([prefix # " setUserReputation: awardToken result was received"]);
     switch (res) {
@@ -160,6 +164,7 @@ actor {
   };
 
   func saveReputationChange(user : Principal, branchId : Nat8, value : Nat) : Map.HashMap<Branch, Nat> {
+    let prefix = Utils.timestampToDate();
     logger.append([prefix # " saveReputationChange: user " # Principal.toText(user) # ", branch = " # Nat8.toText(branchId) # ", value = " # Nat.toText(value)]);
     let state = userReputation.get(user);
     let map = switch (state) {
@@ -274,27 +279,58 @@ actor {
 
   public func eventHandler({
     user : Principal;
-    docId : Nat;
-    caller_doctoken_canister_id : Text;
-    value : Nat8;
-    comment : Text;
+    reviewer : ?Principal;
+    value : ?Nat;
+    category : Text;
+    timestamp : Nat;
+    source : (Text, Nat); // (doctoken_canisterId, documentId)
+    comment : ?Text;
+    metadata : ?[(Text, Types.Metadata)];
   }) : async Text {
+    let prefix = Utils.timestampToDate();
     logger.append([prefix # " Method eventHandler starts, calling method updateDocHistory"]);
+    // If reviewer is absent, then it is a Instant Reputation Change event
+    switch (reviewer) {
+      case (?r) {
+        // TODO Add all checks here - doc, category-tag, reputation, etc
 
-    let result = await updateDocHistory({
-      user = user;
-      caller_doctoken_canister_id = caller_doctoken_canister_id;
-      docId = docId;
-      value = value;
-      comment = comment;
-    });
-    switch (result) {
-      case (#Ok(docHistory)) {
-        logger.append([prefix # " eventHandler: updateDocHistory result was received"]);
-        "Event InstantReputationUpdateEvent was handled";
+        // TODO Move all checks to eventHandler
+        let doc = switch (await checkDocument(source.0, source.1)) {
+          case (#Err(err)) {
+            logger.append([prefix # " updateDocHistory: document check failed"]);
+            return "Error: document check failed";
+          };
+          case (#Ok(doc)) {
+            logger.append([prefix # " updateDocHistory: document ok"]);
+            doc;
+          };
+        };
+        // TODO check reviewer reputation
+        let final_comment = switch (comment) {
+          case (?c) c;
+          case null "";
+        };
+        let final_value : Nat8 = Nat8.fromNat(Option.get<Nat>(value, 0));
+        let result = await updateDocHistory({
+          reviewer = r;
+          user = user;
+          doc = doc;
+          value = final_value;
+          comment = final_comment;
+        });
+        switch (result) {
+          case (#Ok(docHistory)) {
+            logger.append([prefix # " eventHandler: updateDocHistory result was received"]);
+            "Event InstantReputationUpdateEvent was handled";
+          };
+          case (#Err(err)) {
+            logger.append([prefix # " eventHandler: updateDocHistory result was received with error"]);
+            "Event InstantReputationUpdateEvent was handled with error";
+          };
+        };
       };
-      case (#Err(err)) {
-        logger.append([prefix # " eventHandler: updateDocHistory result was received with error"]);
+      case (null) {
+        logger.append([prefix # " eventHandler: reviewer is null, cannot update reputation"]);
         "Event InstantReputationUpdateEvent was handled with error";
       };
     };
@@ -302,38 +338,28 @@ actor {
 
   //Key method for update reputation based on document
   public func updateDocHistory({
+    reviewer : Principal;
     user : Principal;
-    caller_doctoken_canister_id : Text;
-    docId : DocId;
+    doc : Document;
     value : Nat8;
     comment : Text;
   }) : async Types.Result<DocHistory, Types.CommonError> {
     logger.append([prefix # " Method updateDocHistory starts, checking document"]);
 
-    let doc = switch (await checkDocument(caller_doctoken_canister_id, docId)) {
-      case (#Err(err)) {
-        logger.append([prefix # " updateDocHistory: document check failed"]);
-        return #Err(err);
-      };
-      case (#Ok(doc)) {
-        logger.append([prefix # " updateDocHistory: document ok"]);
-        doc;
-      };
-    };
     let newDocHistory : DocHistory = {
-      docId = docId;
+      docId = doc.tokenId;
       timestamp = Time.now();
-      changedBy = user;
+      changedBy = reviewer;
       value = value;
       comment = comment;
     };
-    docHistory.put(docId, Array.append(Option.get(docHistory.get(docId), []), [newDocHistory]));
+    docHistory.put(doc.tokenId, Array.append(Option.get(docHistory.get(doc.tokenId), []), [newDocHistory]));
     logger.append([prefix # " updateDocHistory: checking tags"]);
 
     let branch = await getBranchByTagName(doc.tags[0]);
     logger.append([prefix # " updateDocHistory: branch found by tag " # doc.tags[0] # " is " # Nat8.toText(branch) # " for user " # Principal.toText(user) # " with value " # Nat8.toText(value) # " and comment " # comment]);
 
-    let res = await setUserReputation(user, branch, Nat8.toNat(value));
+    let res = await setUserReputation(reviewer, user, branch, Nat8.toNat(value));
     switch (res) {
       case (#Ok(account, value)) {
         logger.append([prefix # " updateDocHistory: setUserReputation result: account= " # Principal.toText(account.owner) # ", subaccount= " # Nat.toText(value)]);
@@ -344,7 +370,6 @@ actor {
         #Err(#TemporarilyUnavailable);
       };
     };
-    // #Ok(newDocHistory);
   };
 
   public func getDocHistory(docId : DocId) : async [DocHistory] {
@@ -416,6 +441,7 @@ actor {
 
   // Tag part
   public func getBranchByTagName(tag : Tag) : async Branch {
+    let prefix = Utils.timestampToDate();
     let res = switch (tagMap.get(tag)) {
       case null {
         logger.append([prefix # " getBranchByTagName: branch not found by tag " # tag]);
@@ -427,6 +453,34 @@ actor {
       };
     };
     res;
+  };
+
+  // tag name to subaccount through aVa cifer e.g. Java -> Blob(1 02 003 004 000 000 000 000 000 0 0)
+  func convertBranchToSubaccount(tag : Text) : async Subaccount {
+    let cifer = getCifer(tag); // 1 02 003 004
+    Text.encodeUtf8(cifer);
+    var res : Text = cifer.vals()[0];
+    for (byte : Nat8 in cifer.vals()) {
+      // iterator over the Blob
+      res := res # "." # Nat8.toText(byte);
+    };
+    res;
+  };
+
+  public shared query func getCiferByTag(tag : Text) : async ?Text {
+    tagCifer.get(tag);
+  };
+
+  public shared query func getTagByCifer(cifer : Text) : async [(Text, Text)] {
+    let newMap = TrieMap.mapFilter<Text, Text, Text>(
+      tagCifer,
+      Text.equal,
+      Text.hash,
+      func(key, value) = if (Text.startsWith(value, #text cifer)) { ?value } else {
+        null;
+      },
+    );
+    Iter.toArray(newMap.entries());
   };
 
   func getTagByBranch(branch : Branch) : Tag {
@@ -493,6 +547,7 @@ actor {
 
   public func branchToSubaccount(branch : Nat8) : async Subaccount {
     //TODO change logic to create subaccount by branch accorging to the spec
+    let prefix = Utils.timestampToDate();
     logger.append([prefix # " Method branchToSubaccount starts for branch " # Nat8.toText(branch) # ", calling method beBytes"]);
     let bytes = beBytes(Nat32.fromNat(Nat8.toNat(branch)));
     let padding = Array.freeze(Array.init<Nat8>(28, 0 : Nat8));
@@ -570,6 +625,7 @@ actor {
   };
 
   func awardToken(to : Ledger.Account, amount : Ledger.Tokens) : async Types.Result<TxIndex, TransferFromError> {
+    let prefix = Utils.timestampToDate();
     logger.append([prefix # " Method awardToken starts"]);
     let memo : ?Ledger.Memo = null;
     let fee : ?Ledger.Tokens = null;
