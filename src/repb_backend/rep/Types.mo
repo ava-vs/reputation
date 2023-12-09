@@ -7,7 +7,13 @@ module {
 
   public type Document = {
     tokenId : DocId;
-    tags : [Tag];
+    categories : [Category];
+    owner : Principal;
+    metadata : [(Text, Metadata)];
+  };
+
+   public type DocDAO = {
+    categories : [Category];
     owner : Principal;
     metadata : [(Text, Metadata)];
   };
@@ -27,7 +33,7 @@ module {
 
   // public type UserDocuments = Map.HashMap<Principal, [DocId]>;
 
-  public type Branch = Nat8;
+  public type Category = Text;
 
   public type DocumentHistory = {
     docId : DocId;
@@ -37,7 +43,7 @@ module {
     comment : Text;
   };
 
-  public type Tag = Text;
+  // public type Tag = Text;
 
   public type ApiError = {
     #Unauthorized;
@@ -52,11 +58,11 @@ module {
     #Err : E;
   };
 
-  public type Change = (Principal, Branch, Int);
+  // public type Change = (Principal, Branch, Int);
 
-  public type ChangeResult = Result<Change, ApiError>;
+  // public type ChangeResult = Result<Change, ApiError>;
 
-  public type SharedResult = Result<Change, ApiError>;
+  // public type SharedResult = Result<Change, ApiError>;
 
   public type Account = { owner : Principal; subaccount : ?Subaccount };
   public type Subaccount = Blob;
@@ -146,4 +152,9 @@ module {
   };
 
   public type TransferBurnError = TransferFromError or BurnError;
+
+  public type CategoryError = CommonError or {
+    #CategoryAlreadyExists : { category : Category };
+    #CategoryDoesNotExist : { category : Category };
+  };
 };

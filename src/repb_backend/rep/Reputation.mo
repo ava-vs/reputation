@@ -17,24 +17,24 @@ import Principal "mo:base/Principal";
 import Text "mo:base/Text";
 import Time "mo:base/Time";
 import TrieMap "mo:base/TrieMap";
-// TODO move Tils to rep repository
+
 import Logger "../hub/utils/Logger";
 import Utils "../hub/utils/Utils";
 import Types "./Types";
 
 actor {
   type Document = Types.Document;
-  type Branch = Types.Branch;
+  type Category = Types.Category;
   type DocId = Types.DocId;
-  type Tag = Types.Tag;
+  // type Tag = Types.Tag;
   type DocHistory = Types.DocumentHistory;
 
-  type DocDAO = {
-    // main_branch : Tag;
-    tags : [Tag];
-    content : Text;
-    imageLink : Text;
-  };
+  // type DocDAO = {
+  //   // main_branch : Tag;
+  //   tags : [Tag];
+  //   content : Text;
+  //   imageLink : Text;
+  // };
 
   type Account = Types.Account; //{ owner : Principal; subaccount : ?Subaccount };
   type Subaccount = Types.Subaccount; //Blob;
@@ -77,9 +77,9 @@ actor {
   stable var state : Logger.State<Text> = Logger.new<Text>(0, null);
   let logger = Logger.Logger<Text>(state);
   var prefix = Utils.timestampToDate();
-  let hashBranch = func(x : Branch) : Nat32 {
-    return Nat32.fromNat(Nat8.toNat(x * 7));
-  };
+  // let hashBranch = func(x : Branch) : Nat32 {
+  //   return Nat32.fromNat(Nat8.toNat(x * 7));
+  // };
 
   let ic_rep_ledger = "ajw6q-6qaaa-aaaal-adgna-cai";
 
@@ -92,11 +92,70 @@ actor {
   var docHistory = Map.HashMap<DocId, [DocHistory]>(10, Nat.equal, Hash.hash);
   // map userId - [ Reputation ] or map userId - Map (branchId : value)
 
-  var userReputation = Map.HashMap<Principal, Map.HashMap<Branch, Nat>>(1, Principal.equal, Principal.hash);
+  var userReputation = Map.HashMap<Principal, Map.HashMap<Category, Nat>>(1, Principal.equal, Principal.hash);
   // map tag : branchId
-  var tagMap = TrieMap.TrieMap<Text, Branch>(Text.equal, Text.hash);
+  // var tagMap = TrieMap.TrieMap<Text, Branch>(Text.equal, Text.hash);
   var tagCifer = TrieMap.TrieMap<Text, Text>(Text.equal, Text.hash);
-  var userSharedReputation = Map.HashMap<Principal, Map.HashMap<Branch, Nat>>(1, Principal.equal, Principal.hash);
+  var userSharedReputation = Map.HashMap<Principal, Map.HashMap<Category, Nat>>(1, Principal.equal, Principal.hash);
+
+  public shared query func getCiferByTag(tag : Text) : async ?Text {
+    tagCifer.get(tag);
+  };
+
+  public shared query func getTagByCifer(cifer : Text) : async [(Text, Text)] {
+    let newMap = TrieMap.mapFilter<Text, Text, Text>(
+      tagCifer,
+      Text.equal,
+      Text.hash,
+      func(key, value) = if (Text.startsWith(value, #text cifer)) { ?value } else {
+        null;
+      },
+    );
+    Iter.toArray(newMap.entries());
+  };
+
+  public func getSubaccountByCategory(category : Category) : async ?Subaccount {
+    //TODO check for collisions
+    let cifer = await getCiferByTag(category);
+    switch (cifer) {
+      case null { null };
+      case (?c) {
+        var bytes = Blob.toArray(Text.encodeUtf8(c));
+        // Cut to 27 bytes
+        if (bytes.size() > 27) bytes := Array.subArray<Nat8>(bytes, 0, 26);
+        let padding = Array.freeze(Array.init<Nat8>((27 - bytes.size()), 0 : Nat8));
+        ?Blob.fromArray(Array.append(bytes, padding));
+      };
+    };
+  };
+
+  // public shared query func getTagByCategory(category :Text) : async ?Text {
+  //   let newMap = TrieMap.mapFilter<Text, Text, Text>(
+  //     tagCifer,
+  //     Text.equal,
+  //     Text.hash,
+  //     func(key, value) = if (Text.startsWith(value, #text branch)) { ?key } else {
+  //       null;
+  //     },
+  //   );
+  //   Iter.toArray(newMap.entries());
+  // };
+
+  // public shared query func getBranchByTag(tag : Text) : async ?Nat8 {
+  //   tagCifer.get(tag);
+  // };
+
+  // public shared query func getBranchByCifer(cifer : Text) : async ?Nat8 {
+  //   let newMap = TrieMap.mapFilter<Text, Text, Text>(
+  //     tagCifer,
+  //     Text.equal,
+  //     Text.hash,
+  //     func(key, value) = if (Text.startsWith(value, #text cifer)) { ?value } else {
+  //       null;
+  //     },
+  //   );
+  //   Iter.toArray(newMap.entries());
+  // };
 
   public func viewLogs(end : Nat) : async [Text] {
     let view = logger.view(0, end);
@@ -111,26 +170,27 @@ actor {
     let balance = await getUserBalance(user);
   };
 
-  public func getReputationByBranch(user : Principal, branchId : Nat8) : async ?(Branch, Nat) {
+  public func getReputationByCategory(user : Principal, category : Text) : async ?(Category, Nat) {
     // Implement logic to get reputation value in a specific branch
-    let res = await userBalanceByBranch(user, branchId);
-    return ?(branchId, res);
+    let res = await userBalanceByCategory(user, category);
+    return ?(category, res);
   };
 
-  func subaccountToNatArray(subaccount : Types.Subaccount) : [Nat8] {
-    var buffer = Buffer.Buffer<Nat8>(0);
-    for (item in subaccount.vals()) {
-      buffer.add(item);
-    };
-    Buffer.toArray(buffer);
-  };
+  // func subaccountToNatArray(subaccount : Types.Subaccount) : [Nat8] {
+  //   var buffer = Buffer.Buffer<Nat8>(0);
+  //   for (item in subaccount.vals()) {
+  //     buffer.add(item);
+  //   };
+  //   Buffer.toArray(buffer);
+  // };
 
   // set reputation value for a given user in a specific branch
-  func setUserReputation(reviewer : Principal, user : Principal, branchId : Nat8, value : Nat) : async Types.Result<(Types.Account, Nat), Types.TransferBurnError> {
+  func setUserReputation(reviewer : Principal, user : Principal, category : Text, value : Nat) : async Types.Result<(Types.Account, Nat), Types.TransferBurnError> {
     logger.append([prefix # " setUserReputation starts, calling method branchToSubaccount"]);
-    let sub = await branchToSubaccount(branchId);
+    let sub : ?Subaccount = await getSubaccountByCategory(category); //await getCiferByTag(category);
+    if (sub == null) return #Err(#NotFound { message = "Cannot find out the category " # category; docId = 0 });
     logger.append([prefix # " setUserReputation: calling method awardToken"]);
-    let to : Ledger.Account = { owner = user; subaccount = ?Blob.toArray(sub) };
+    let to : Types.Account = { owner = user; subaccount = sub };
 
     // TODO decrease reviewer distributed reputation
 
@@ -139,10 +199,10 @@ actor {
     switch (res) {
       case (#Ok(id)) {
         logger.append([prefix # " setUserReputation: awardToken #Ok result was received: " # Nat.toText(id) # ", calling method saveReputationChange"]);
-        let saveRepChangeResult = saveReputationChange(user, branchId, value);
+        let saveRepChangeResult = saveReputationChange(user, category, value);
         logger.append([prefix # " setUserReputation: calling getReputationByBranch"]);
-        let bal = await getReputationByBranch(user, branchId);
-        logger.append([prefix # " setUserReputation: result for: " # Principal.toText(user) # ", branch = " # Nat8.toText(branchId)]);
+        let bal = await getReputationByCategory(user, category);
+        logger.append([prefix # " setUserReputation: result for: " # Principal.toText(user) # ", category = " # category]);
 
         let res = switch (bal) {
           case null {
@@ -150,11 +210,11 @@ actor {
             0;
           };
           case (?(branch, value)) {
-            logger.append([prefix # " setUserReputation: getReputationByBranch result was received: branch = " # Nat8.toText(branch) # ", value = " # Nat.toText(value)]);
+            logger.append([prefix # " setUserReputation: getReputationByBranch result was received: category = " # category # ", value = " # Nat.toText(value)]);
             value;
           };
         };
-        return #Ok({ owner = user; subaccount = ?sub }, res);
+        return #Ok({ owner = user; subaccount = sub }, res);
       };
       case (#Err(err)) {
         logger.append([prefix # " ERROR: setUserReputation: awardToken #Err result was received"]);
@@ -163,34 +223,33 @@ actor {
     };
   };
 
-  func saveReputationChange(user : Principal, branchId : Nat8, value : Nat) : Map.HashMap<Branch, Nat> {
-    let prefix = Utils.timestampToDate();
-    logger.append([prefix # " saveReputationChange: user " # Principal.toText(user) # ", branch = " # Nat8.toText(branchId) # ", value = " # Nat.toText(value)]);
+  func saveReputationChange(user : Principal, category : Text, value : Nat) : Map.HashMap<Category, Nat> {
+    logger.append([prefix # " saveReputationChange: user " # Principal.toText(user) # ", category = " # category # ", value = " # Nat.toText(value)]);
     let state = userReputation.get(user);
     let map = switch (state) {
-      case null { Map.HashMap<Branch, Nat>(0, Nat8.equal, hashBranch) };
+      case null { Map.HashMap<Category, Nat>(0, Text.equal, Text.hash) };
       case (?map) {
-        map.put(branchId, value);
+        map.put(category, value);
         map;
       };
     };
   };
 
   // universal method for award/burn reputation
-  public func changeReputation(user : Principal, branchId : Branch, value : Int) : async Types.ChangeResult {
-    let res : Types.Change = (user, branchId, value);
-    // TODO validation: check ownership
+  // public func changeReputation(user : Principal, branchId : Category, value : Int) : async Types.ChangeResult {
+  //   let res : Types.Change = (user, branchId, value);
+  //   // TODO validation: check ownership
 
-    // TODO get exist reputation : getUserReputation
+  //   // TODO get exist reputation : getUserReputation
 
-    // TODO change reputation:  setUserReputation
+  //   // TODO change reputation:  setUserReputation
 
-    // ?TODO save new state
+  //   // ?TODO save new state
 
-    // return new state
+  //   // return new state
 
-    return #Ok(res);
-  };
+  //   return #Ok(res);
+  // };
 
   // Shared part
 
@@ -246,8 +305,9 @@ actor {
     };
   };
 
-  public func getDocumentsByBranch(branch : Branch) : async [Document] {
-    let document = Array.find<Document>(documents, func doc = Text.equal(getTagByBranch(branch), doc.tags[0]));
+  public func getDocumentsByCategory(category : Category) : async [Document] {
+    // TODO check all categories in document, not only first one
+    let document = Array.find<Document>(documents, func doc = Text.equal(category, doc.categories[0]));
 
     switch (document) {
       case null [];
@@ -255,18 +315,18 @@ actor {
     };
   };
 
-  public func setDocumentByUser(user : Principal, branch : Branch, document : DocDAO) : async Types.Result<Document, Text> {
+  public func setDocumentByUser(user : Principal, category : Category, document : Document) : async Types.Result<Document, Text> {
     let nextId = documents.size();
     let docList = Option.get(userDocumentMap.get(user), []);
-    let newTags = Buffer.Buffer<Tag>(1);
-    newTags.add(getTagByBranch(branch));
-    let existBranches = Buffer.fromArray<Tag>(document.tags);
+    let newTags = Buffer.Buffer<Category>(1);
+    newTags.add(category);
+    let existBranches = Buffer.fromArray<Category>(document.categories);
     newTags.append(existBranches);
     let newDoc = {
       tokenId = nextId;
-      tags = Buffer.toArray(newTags);
+      categories = Buffer.toArray(newTags);
       owner = user;
-      metadata = [(document.imageLink, #Text(document.imageLink))];
+      metadata = document.metadata;
     };
     documents := Array.append(documents, [newDoc]);
     let newList = Array.append(docList, [nextId]);
@@ -356,8 +416,8 @@ actor {
     docHistory.put(doc.tokenId, Array.append(Option.get(docHistory.get(doc.tokenId), []), [newDocHistory]));
     logger.append([prefix # " updateDocHistory: checking tags"]);
 
-    let branch = await getBranchByTagName(doc.tags[0]);
-    logger.append([prefix # " updateDocHistory: branch found by tag " # doc.tags[0] # " is " # Nat8.toText(branch) # " for user " # Principal.toText(user) # " with value " # Nat8.toText(value) # " and comment " # comment]);
+    let branch = doc.categories[0];
+    logger.append([prefix # " updateDocHistory: branch found by tag " # doc.categories[0] # " is " # branch # " for user " # Principal.toText(user) # " with value " # Nat8.toText(value) # " and comment " # comment]);
 
     let res = await setUserReputation(reviewer, user, branch, Nat8.toNat(value));
     switch (res) {
@@ -414,104 +474,96 @@ actor {
     };
   };
 
-  public func newDocument(user : Principal, doc : DocDAO) : async Types.Result<DocId, Types.CommonError> {
-    let userDocs = userDocumentMap.get(user);
-    // TODO choose branch: chooseTag(preferBranch, doc);
-    let branch_opt = Nat.fromText(doc.tags[0]);
-    let branch = switch (branch_opt) {
-      case null return #Err(#NotFound { message = "Cannot find out the branch " # doc.tags[0]; docId = 0 });
-      case (?br) Nat8.fromNat(br);
-    };
-    let document = await setDocumentByUser(user, branch, doc);
-    return #Err(#TemporarilyUnavailable);
-  };
+  // public func newDocument(user : Principal, doc : Types.DocDAO) : async Types.Result<DocId, Types.CommonError> {
+  //   let userDocs = userDocumentMap.get(user);
+  //   // TODO choose branch: chooseTag(preferBranch, doc);
+  //   let branch_opt = Nat.fromText(doc.tags[0]);
+  //   let branch = switch (branch_opt) {
+  //     case null return #Err(#NotFound { message = "Cannot find out the branch " # doc.tags[0]; docId = 0 });
+  //     case (?br) Nat8.fromNat(br);
+  //   };
+  //   let document = await setDocumentByUser(user, branch, doc);
+  //   return #Err(#TemporarilyUnavailable);
+  // };
 
-  public func createDocument(user : Principal, branchs : [Nat8], content : Text, imageLink : Text) : async Document {
-    var tags = Buffer.Buffer<Text>(1);
-    for (item in branchs.vals()) {
-      tags.add(getTagByBranch(item));
-    };
-    let newDoc = {
-      owner = user;
-      tokenId = 0;
-      tags = Buffer.toArray(tags);
-      metadata = [("content", #Text(content)), ("imageLink", #Text(imageLink))];
-    };
-  };
+  // public func createDocument(user : Principal, branchs : [Nat8], content : Text, imageLink : Text) : async Document {
+  //   var tags = Buffer.Buffer<Text>(1);
+  //   for (item in branchs.vals()) {
+  //     tags.add(getTagByBranch(item));
+  //   };
+  //   let newDoc = {
+  //     owner = user;
+  //     tokenId = 0;
+  //     tags = Buffer.toArray(tags);
+  //     metadata = [("content", #Text(content)), ("imageLink", #Text(imageLink))];
+  //   };
+  // };
 
   // Tag part
-  public func getBranchByTagName(tag : Tag) : async Branch {
-    let prefix = Utils.timestampToDate();
-    let res = switch (tagMap.get(tag)) {
-      case null {
-        logger.append([prefix # " getBranchByTagName: branch not found by tag " # tag]);
-        Nat8.fromNat(0);
-      };
-      case (?br) {
-        logger.append([prefix # " getBranchByTagName: branch found by tag " # tag # " is " # Nat8.toText(br)]);
-        br;
-      };
-    };
-    res;
-  };
+  // public func getBranchByTagName(tag : Tag) : async Branch {
+  //   let prefix = Utils.timestampToDate();
+  //   let res = switch (tagMap.get(tag)) {
+  //     case null {
+  //       logger.append([prefix # " getBranchByTagName: branch not found by tag " # tag]);
+  //       Nat8.fromNat(0);
+  //     };
+  //     case (?br) {
+  //       logger.append([prefix # " getBranchByTagName: branch found by tag " # tag # " is " # Nat8.toText(br)]);
+  //       br;
+  //     };
+  //   };
+  //   res;
+  // };
 
   // tag name to subaccount through aVa cifer e.g. Java -> Blob(1 02 003 004 000 000 000 000 000 0 0)
-  func convertBranchToSubaccount(tag : Text) : async Subaccount {
-    let cifer = getCifer(tag); // 1 02 003 004
-    Text.encodeUtf8(cifer);
-    var res : Text = cifer.vals()[0];
-    for (byte : Nat8 in cifer.vals()) {
-      // iterator over the Blob
-      res := res # "." # Nat8.toText(byte);
-    };
-    res;
+  // func convertCategoryToSubaccount(tag : Text) : async Subaccount {
+  //   let cifer = getCiferByTag(tag); // 1 02 003 004
+  //   // Text.encodeUtf8(cifer);
+  //   var res : Text = cifer.vals()[0];
+  //   for (byte : Nat8 in cifer.vals()) {
+  //     // iterator over the Blob
+  //     res := res # "." # Nat8.toText(byte);
+  //   };
+  //   res;
+  // };
+
+  // func getTagByBranch(category : Category) : Tag {
+  //   for ((key, value) in tagMap.entries()) {
+  //     if (Nat8.equal(branch, value)) return key;
+  //   };
+  //   "0";
+  // };
+
+  func addCifer(category : Category) : Text {
+    let default_cifer = "1.7.1.1";
+    tagCifer.put(category, default_cifer);
+    default_cifer;
   };
 
-  public shared query func getCiferByTag(tag : Text) : async ?Text {
-    tagCifer.get(tag);
-  };
-
-  public shared query func getTagByCifer(cifer : Text) : async [(Text, Text)] {
-    let newMap = TrieMap.mapFilter<Text, Text, Text>(
-      tagCifer,
-      Text.equal,
-      Text.hash,
-      func(key, value) = if (Text.startsWith(value, #text cifer)) { ?value } else {
-        null;
-      },
-    );
-    Iter.toArray(newMap.entries());
-  };
-
-  func getTagByBranch(branch : Branch) : Tag {
-    for ((key, value) in tagMap.entries()) {
-      if (Nat8.equal(branch, value)) return key;
-    };
-    "0";
-  };
-
-  public func setNewTag(tag : Tag) : async Types.Result<(Tag, Branch), (Tag, Branch)> {
-    switch (tagMap.get(tag)) {
+  public func setNewTag(category : Category) : async Types.Result<(Category, Text), Types.CategoryError> {
+    let current_cifer = await getCiferByTag(category);
+    switch (current_cifer) {
       case null {
         // TODO Create a hierarchical system of industries
-        let newBranch = tagMap.size();
-        tagMap.put(tag, Nat8.fromNat(newBranch));
-        #Ok(tag, Nat8.fromNat(newBranch));
+        // let newBranch = tagMap.size();
+        // tagMap.put(tag, Nat8.fromNat(newBranch));
+        let cifer = addCifer(category);
+        #Ok(category, cifer);
       };
-      case (?br) #Err(tag, br);
+      case (?t) #Err(#CategoryAlreadyExists { category });
     };
   };
 
-  public func getTags() : async [(Tag, Branch)] {
-    let res = Buffer.Buffer<(Tag, Branch)>(1);
-    for ((key, value) in tagMap.entries()) {
+  public func getCategories() : async [(Category, Text)] {
+    let res = Buffer.Buffer<(Category, Text)>(1);
+    for ((key, value) in tagCifer.entries()) {
       res.add(key, value);
     };
     Buffer.toArray(res);
   };
 
   /*
-  Token Handling
+  Token Handling--------------------------------------------------------------------------
   */
 
   // null subaccount will be use as shared token wallet
@@ -545,38 +597,38 @@ actor {
     [byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)];
   };
 
-  public func branchToSubaccount(branch : Nat8) : async Subaccount {
-    //TODO change logic to create subaccount by branch accorging to the spec
-    let prefix = Utils.timestampToDate();
-    logger.append([prefix # " Method branchToSubaccount starts for branch " # Nat8.toText(branch) # ", calling method beBytes"]);
-    let bytes = beBytes(Nat32.fromNat(Nat8.toNat(branch)));
-    let padding = Array.freeze(Array.init<Nat8>(28, 0 : Nat8));
-    Blob.fromArray(Array.append(bytes, padding));
-  };
+  // public func branchToSubaccount(branch : Nat8) : async Subaccount {
+  //   //TODO change logic to create subaccount by branch accorging to the spec
+  //   let prefix = Utils.timestampToDate();
+  //   logger.append([prefix # " Method branchToSubaccount starts for branch " # Nat8.toText(branch) # ", calling method beBytes"]);
+  //   let bytes = beBytes(Nat32.fromNat(Nat8.toNat(branch)));
+  //   let padding = Array.freeze(Array.init<Nat8>(28, 0 : Nat8));
+  //   Blob.fromArray(Array.append(bytes, padding));
+  // };
 
   func nullSubaccount() : async Subaccount {
     Blob.fromArrayMut(Array.init(32, 0 : Nat8));
   };
 
-  func addSubaccount(user : Principal, branch : Nat8) : async Account {
-    let sub = await branchToSubaccount(branch);
-    let newAccount : Account = { owner = user; subaccount = ?sub };
+  func addSubaccount(user : Principal, category : Text) : async Account {
+    let sub = await getSubaccountByCategory(category);
+    let newAccount : Account = { owner = user; subaccount = sub };
   };
 
-  func getBranchFromSubaccount(subaccount : ?Subaccount) : Nat8 {
-    let sub = switch (subaccount) {
-      case null return 0;
-      case (?sub) sub;
-    };
-    let bytes = Blob.toArray(sub);
-    let b0 = Nat32.fromNat(Nat8.toNat(bytes[0]));
-    let b1 = Nat32.fromNat(Nat8.toNat(bytes[1]));
-    let b2 = Nat32.fromNat(Nat8.toNat(bytes[2]));
-    let b3 = Nat32.fromNat(Nat8.toNat(bytes[3]));
+  // func getBranchFromSubaccount(subaccount : ?Subaccount) : Nat8 {
+  //   let sub = switch (subaccount) {
+  //     case null return 0;
+  //     case (?sub) sub;
+  //   };
+  //   let bytes = Blob.toArray(sub);
+  //   let b0 = Nat32.fromNat(Nat8.toNat(bytes[0]));
+  //   let b1 = Nat32.fromNat(Nat8.toNat(bytes[1]));
+  //   let b2 = Nat32.fromNat(Nat8.toNat(bytes[2]));
+  //   let b3 = Nat32.fromNat(Nat8.toNat(bytes[3]));
 
-    let n = (b0 << 24) + (b1 << 16) + (b2 << 8) + b3;
-    Nat8.fromNat(Nat32.toNat(n));
-  };
+  //   let n = (b0 << 24) + (b1 << 16) + (b2 << 8) + b3;
+  //   Nat8.fromNat(Nat32.toNat(n));
+  // };
 
   // func subaccountToNatArray(subaccount : Subaccount) : [Nat8] {
   //   var buffer = Buffer.Buffer<Nat8>(0);
@@ -600,11 +652,15 @@ actor {
     await Ledger.icrc1_balance_by_principal({ owner = user; subaccount = null });
   };
 
-  public func userBalanceByBranch(user : Principal, branch : Nat8) : async Nat {
-    let sub = await branchToSubaccount(branch);
+  public func userBalanceByCategory(user : Principal, category : Text) : async Nat {
+    let sub : ?Blob = await getSubaccountByCategory(category);
+    let ledger_subaccount : Ledger.Subaccount = switch (sub) {
+      case (null) { [] };
+      case (?s) { Blob.toArray(s) };
+    };
     let addSub : Ledger.Account = {
       owner = user;
-      subaccount = ?subaccountToNatArray(sub);
+      subaccount = ?ledger_subaccount;
     };
     await Ledger.icrc1_balance_of(addSub);
   };
@@ -624,17 +680,25 @@ actor {
     };
   };
 
-  func awardToken(to : Ledger.Account, amount : Ledger.Tokens) : async Types.Result<TxIndex, TransferFromError> {
+  func awardToken(
+    to : Types.Account,
+    amount : Types.Tokens,
+  ) : async Types.Result<TxIndex, Types.TransferFromError> {
     let prefix = Utils.timestampToDate();
     logger.append([prefix # " Method awardToken starts"]);
     let memo : ?Ledger.Memo = null;
     let fee : ?Ledger.Tokens = null;
-    let created_at_time : ?Ledger.Timestamp = ?Nat64.fromIntWrap(Time.now());
-    let new_sub = switch (to.subaccount) {
-      case null { [] };
-      case (?sub) { sub };
+    let created_at_time : ?Types.Timestamp = ?Nat64.fromIntWrap(Time.now());
+    let sub : ?Blob = to.subaccount;
+    let ledger_subaccount : Ledger.Subaccount = switch (sub) {
+      case (null) { [] };
+      case (?s) { Blob.toArray(s) };
     };
-    let acc : Ledger.Account = { owner = to.owner; subaccount = ?new_sub };
+
+    let acc : Ledger.Account = {
+      owner = to.owner;
+      subaccount = ?ledger_subaccount;
+    };
     logger.append([prefix # " Method awardToken: calling method Ledger.icrc2_transfer_from \n"]);
     logger.append([prefix # " awardToken: with args: " # Principal.toText(acc.owner) # ", amount = " # Nat.toText(amount)]);
     let pre_mint_account = await getMintingAccountPrincipal();
@@ -647,106 +711,140 @@ actor {
       memo = memo;
       created_at_time = created_at_time;
     });
+    logger.append([prefix # " Method awardToken: Ledger.icrc2_transfer_from result was received"]);
+    #Ok(0);
   };
 
-  func sendToken(from : Ledger.Account, to : Ledger.Account, amount : Ledger.Tokens) : async Types.Result<TxIndex, TransferFromError> {
-    let sender : ?Ledger.Subaccount = from.subaccount;
-    let memo : ?Ledger.Memo = null;
-    let fee : ?Ledger.Tokens = null;
-    let created_at_time : ?Ledger.Timestamp = ?Nat64.fromIntWrap(Time.now());
-    let a : Ledger.Tokens = amount;
-    let acc : Ledger.Account = to;
-    let res = await Ledger.icrc2_transfer_from({
-      from = from;
-      to = to;
-      amount = amount;
-      fee = fee;
-      memo = memo;
-      created_at_time = created_at_time;
-    });
-    ignore await awardIncenitive(from, 1);
-    res;
-  };
+  // func sendToken(from :
+  // // Ledger.
+  // Account, to :
+  // // Ledger.
+  // Account, amount :
+  // // Ledger.
+  // Tokens){
+  // //  : async Types.Result<TxIndex, Types.TransferFromError> {
+  //   let sender : ?
+  //   // Ledger.
+  //   Subaccount = from.subaccount;
+  //   let memo : ?
+  //   // Ledger.
+  //   Memo = null;
+  //   let fee : ?
+  //   // Ledger.
+  //   Tokens = null;
+  //   let created_at_time : ?
+  //   // Ledger.
+  //   Timestamp = ?Nat64.fromIntWrap(Time.now());
+  //   let a :
+  //   // Ledger.
+  //   Tokens = amount;
+  //   let acc :
+  //   // Ledger.
+  //   Account = to;
+  //   let res =
+  //   //  await
+  //   // Ledger.
+  //   // icrc2_transfer_from({
+  //   //   from = from;
+  //   //   to = to;
+  //   //   amount = amount;
+  //   //   fee = fee;
+  //   //   memo = memo;
+  //   //   created_at_time = created_at_time;
+  //   // });
+  //   ignore await awardIncenitive(from, 1);
+  //   res;
+  // };
 
   // Decrease reputation
-  public func burnToken(from : Ledger.Account, amount : Ledger.Tokens) : async Types.Result<TxIndex, TransferFromError> {
-    // TODO caller validation
-    let sender : ?Ledger.Subaccount = from.subaccount;
-    let memo : ?Ledger.Memo = null;
-    let fee : ?Ledger.Tokens = ?0;
-    let created_at_time : ?Ledger.Timestamp = ?Nat64.fromIntWrap(Time.now());
-    let a : Ledger.Tokens = amount;
-    let pre_mint_account = await getMintingAccountPrincipal();
-    let res = await Ledger.icrc2_transfer_from({
-      from = from;
-      to = { owner = pre_mint_account; subaccount = null };
-      amount = amount;
-      fee = fee;
-      memo = memo;
-      created_at_time = created_at_time;
-    });
-  };
+  // public func burnToken(from :
+  // // Ledger.
+  // Account, amount :
+  // // Ledger.
+  // Tokens) : async Types.Result<TxIndex, Types.TransferFromError> {
+  //   // TODO caller validation
+  //   let sender : ?Ledger.Subaccount = from.subaccount;
+  //   let memo : ?Ledger.Memo = null;
+  //   let fee : ?Ledger.Tokens = ?0;
+  //   let created_at_time : ?Ledger.Timestamp = ?Nat64.fromIntWrap(Time.now());
+  //   let a : Ledger.Tokens = amount;
+  //   let pre_mint_account = await getMintingAccountPrincipal();
+  //   let res = await Ledger.icrc2_transfer_from({
+  //     from = from;
+  //     to = { owner = pre_mint_account; subaccount = null };
+  //     amount = amount;
+  //     fee = fee;
+  //     memo = memo;
+  //     created_at_time = created_at_time;
+  //   });
+  // };
 
   // TODO
-  public func askForBurn(
-    requester : Account,
-    from : Account,
-    document : Types.DocId,
-    tags : [Types.Tag],
-    amount : Ledger.Tokens,
-  ) : async Types.Result<TxIndex, Types.TransferBurnError> {
-    // check requester's balance
-    let branch = getBranchFromSubaccount(requester.subaccount);
-    let balance_requester = await userBalanceByBranch(requester.owner, branch);
-    // check from balance
-    let branch_author = getBranchFromSubaccount(from.subaccount);
-    if (not Nat8.equal(branch, branch_author)) return #Err(#WrongBranch { current_branch = branch; target_branch = branch_author });
-    let balance_author = await userBalanceByBranch(from.owner, branch);
-    if (balance_requester < balance_author) return #Err(#InsufficientReputation { current_branch = branch; balance = balance_author });
-    // TODO check document's tags for equity to requester's subaccount
-    // let checkTag = Array.find<Types.Tag>(tags, func x = (x == branch));
+  // public func askForBurn(
+  //   requester : Account,
+  //   from : Account,
+  //   document : Types.DocId,
+  //   tags : [Types.Category],
+  //   amount :
+  //   // Ledger.
+  //   Tokens,
+  // ) : async Types.Result<TxIndex, Types.TransferBurnError> {
+  //   // check requester's balance
+  //   let branch = getBranchFromSubaccount(requester.subaccount);
+  //   let balance_requester = await userBalanceByBranch(requester.owner, branch);
+  //   // check from balance
+  //   let branch_author = getBranchFromSubaccount(from.subaccount);
+  //   if (not Nat8.equal(branch, branch_author)) return #Err(#WrongBranch { current_branch = branch; target_branch = branch_author });
+  //   let balance_author = await userBalanceByBranch(from.owner, branch);
+  //   if (balance_requester < balance_author) return #Err(#InsufficientReputation { current_branch = branch; balance = balance_author });
+  //   // TODO check document's tags for equity to requester's subaccount
+  //   // let checkTag = Array.find<Types.Tag>(tags, func x = (x == branch));
 
-    // TODO burn requester's token
-    // TODO burn from token
-    // TODO create history log
+  //   // TODO burn requester's token
+  //   // TODO burn from token
+  //   // TODO create history log
 
-    return #Err(#TemporarilyUnavailable);
-  };
+  //   return #Err(#TemporarilyUnavailable);
+  // };
 
   // Incenitive
-  public func awardIncenitive(to : Ledger.Account, amount : Ledger.Tokens) : async Types.Result<TxIndex, TransferFromError> {
-    let memo : ?Ledger.Memo = null;
-    let created_at_time : ?Ledger.Timestamp = ?Nat64.fromIntWrap(Time.now());
-    let receiver : Ledger.Account = {
-      owner = to.owner;
-      subaccount = ?(subaccountToNatArray(await branchToSubaccount(1)));
-    };
-    let pre_mint_account = await getMintingAccountPrincipal();
-    let res = await Ledger.icrc2_transfer_from({
-      from = { owner = pre_mint_account; subaccount = null };
-      to = receiver;
-      amount = amount;
-      fee = ?0;
-      memo = memo;
-      created_at_time = created_at_time;
-    });
+  // public func awardIncenitive(to :
+  // // Ledger.
+  // Account, amount :
+  // // Ledger.
+  // Tokens) : async Types.Result<TxIndex, Types.TransferFromError> {
+  //   let memo : ?Ledger.Memo = null;
+  //   let created_at_time : ?Ledger.Timestamp = ?Nat64.fromIntWrap(Time.now());
+  //   let receiver : Ledger.Account = {
+  //     owner = to.owner;
+  //     subaccount = ?(subaccountToNatArray(await branchToSubaccount(1)));
+  //   };
+  //   let pre_mint_account = await getMintingAccountPrincipal();
+  //   let res = await Ledger.icrc2_transfer_from({
+  //     from = { owner = pre_mint_account; subaccount = null };
+  //     to = receiver;
+  //     amount = amount;
+  //     fee = ?0;
+  //     memo = memo;
+  //     created_at_time = created_at_time;
+  //   });
 
-    // Scheduler part
-    // public func distributeTokens(user: Principal, branch : Nat8, value : Nat) : async Result<Bool, TransferFromError> {
-    //   sendToken
-    // };
-  };
+  // Scheduler part
+  // public func distributeTokens(user: Principal, branch : Nat8, value : Nat) : async Result<Bool, TransferFromError> {
+  //   sendToken
+  // };
+  // };
 
   // Stable tags, docHistory and user reputation storage
-  stable var tagEntries : [(Tag, Branch)] = [];
-  stable var userReputationArray : [(Principal, [(Branch, Nat)])] = [];
+  stable var tagEntries : [(Category, Text)] = [];
+  stable var userReputationArray : [(Principal, [(Category, Nat)])] = [];
   stable var docHistoryArray : [(DocId, [DocHistory])] = [];
   system func preupgrade() {
-    for ((tag, branch) in tagMap.entries()) {
+    for ((tag, branch) in tagCifer.entries()) {
       tagEntries := Array.append(tagEntries, [(tag, branch)]);
     };
     for ((user, entry) in userReputation.entries()) {
-      var buffer = Buffer.Buffer<(Branch, Nat)>(0);
+      var buffer = Buffer.Buffer<(Category, Nat)>(0);
       for ((branch, value) in entry.entries()) {
         buffer.add((branch, value));
       };
@@ -763,11 +861,11 @@ actor {
 
   system func postupgrade() {
     for ((tag, branch) in tagEntries.vals()) {
-      tagMap.put(tag, branch);
+      tagCifer.put(tag, branch);
     };
     tagEntries := [];
     for ((user, entry) in userReputationArray.vals()) {
-      var map = Map.HashMap<Branch, Nat>(0, Nat8.equal, hashBranch);
+      var map = Map.HashMap<Category, Nat>(0, Text.equal, Text.hash);
       for ((branch, value) in entry.vals()) {
         map.put(branch, value);
       };
@@ -782,12 +880,12 @@ actor {
 
   // Clearance methods
   public func clearTags() : async Bool {
-    tagMap := TrieMap.TrieMap<Text, Branch>(Text.equal, Text.hash);
+    tagCifer := TrieMap.TrieMap<Text, Category>(Text.equal, Text.hash);
     true;
   };
 
   public func clearUserReputation() : async Bool {
-    userReputation := Map.HashMap<Principal, Map.HashMap<Branch, Nat>>(0, Principal.equal, Principal.hash);
+    userReputation := Map.HashMap<Principal, Map.HashMap<Category, Nat>>(0, Principal.equal, Principal.hash);
     true;
   };
 
