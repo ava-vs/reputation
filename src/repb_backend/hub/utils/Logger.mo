@@ -159,8 +159,19 @@ module {
         };
         i := i + 1;
       }
-    }
+    };
+
+    //Clear the log.
+    public func clear() {
+      s.buckets := Deque.empty();
+      s.num_of_buckets := 0;
+      s.bucket := List.nil();
+      s.num_of_lines := 0;
+      s.start_index := 0;
+    };
   };
+
+ 
 
   type Suite = Suite.Suite;
   public func test() : Suite {

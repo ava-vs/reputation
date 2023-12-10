@@ -49,7 +49,7 @@ actor class Hub() {
     let rep_canister_id = "aoxye-tiaaa-aaaal-adgnq-cai";
     let default_doctoken_canister_id = "h5x3q-hyaaa-aaaal-adg6q-cai";
 
-    // TODO make eventHub stable
+    // subscribers : <canisterId ,
 
     var eventHub = {
         var events : [E.Event] = [];
@@ -65,15 +65,21 @@ actor class Hub() {
         Buffer.toArray(result);
     };
 
-    public func getTags() : async [(E.Tag, E.Branch)] {
+    public func clearAllLogs() : async Bool {
+        logger.clear();
+        true;
+    };
+
+    public func getCategories() : async [(E.Category, Text)] {
         let rep_canister : E.InstantReputationUpdateEvent = actor (rep_canister_id);
-        let tags = await rep_canister.getTags();
+        let tags = await rep_canister.getCategories();
         tags;
     };
 
-    public func subscribe(subscriber : Subscriber) : async () {
+    public func subscribe(subscriber : Subscriber) : async Bool {
         //TODO check the subscriber for the required methods
         eventHub.subscribers.put(subscriber.callback, subscriber);
+        true;
     };
 
     public func unsubscribe(principal : Principal) : async () {
@@ -88,7 +94,7 @@ actor class Hub() {
         let buffer = Buffer.Buffer<Subscriber>(0);
         for (subscriber in eventHub.subscribers.vals()) {
             // TODO check subscriber
-            logger.append([prefix # "emitEvent: check subscriber"]);
+            logger.append([prefix # "emitEvent: check subscriber " # Principal.toText(subscriber.callback) # " with filter " # subscriber.filter.fieldFilters[0].name]);
 
             if (isEventMatchFilter(event, subscriber.filter)) {
                 logger.append([prefix # "emitEvent: event matched"]);
@@ -128,19 +134,22 @@ actor class Hub() {
 
         logger.append([prefix # "Starting method isEventMatchFilter"]);
 
-        logger.append([prefix # "isEventMatchFilter: Checking event type", eventNameToText(Option.get<E.EventName>(filter.eventType, #Unknown))]);
-
+        logger.append([prefix # " isEventMatchFilter: Checking subsriber's event type", eventNameToText(Option.get<E.EventName>(filter.eventType, #Unknown))]);
+        logger.append([prefix # " with event type: ", eventNameToText(event.eventType)]);
         switch (filter.eventType) {
             case (null) {
                 logger.append([prefix # "isEventMatchFilter: Event type is null"]);
             };
             case (?t) if (t != event.eventType) {
-                logger.append([prefix # "isEventMatchFilter: Event type does not match", eventNameToText(event.eventType)]);
+                logger.append([prefix # "isEventMatchFilter: Event type does not match: " # eventNameToText(event.eventType) # " and " # eventNameToText(t)]);
                 return false;
             };
         };
-
+        logger.append([prefix # " isEventMatchFilter: Event type matched"]);
+        logger.append([prefix # " isEventMatchFilter: Checking subsriber's field filters"]);
+        logger.append([prefix # " isEventMatchFilter: event topic 1: name = " # event.topics[0].name # " , value = " # Nat8.toText(Blob.toArray(event.topics[0].value)[0])]);
         for (field in filter.fieldFilters.vals()) {
+            logger.append([prefix # "isEventMatchFilter: Checking field", field.name, Nat8.toText(Blob.toArray(field.value)[0])]);
             let found = Array.find<EventField>(
                 event.topics,
                 func(topic : EventField) : Bool {
@@ -194,11 +203,21 @@ actor class Hub() {
                 logger.append([prefix # "sendEvent: case #InstantReputationUpdateEvent, start updateDocHistory"]);
                 let canister : E.InstantReputationUpdateEvent = actor (subscriber_canister_id);
                 logger.append([prefix # "sendEvent: canister created"]);
-                let args : E.ReputationChangeRequest = event.reputation_change;
+                let args : E.ReputationChangeRequest = event.reputation_change;//{
+                //     user : Principal = event.reputation_change.user;
+                //     reviewer : ?Principal =event.reputation_change.reviewer;
+                //     value : ?Nat = event.reputation_change.value;
+                //     category : Text = event.reputation_change.category;
+                //     timestamp : Nat = event.reputation_change.timestamp;
+                //     source : (Text, Nat) = (caller_doctoken_canister_id, event.reputation_change.source.1); // (doctoken_canisterId, documentId)
+                //     comment : ?Text = event.reputation_change.comment;
+                //     metadata = event.reputation_change.metadata;
+                    
+                // };
                 let rep_value = Nat.toText(Option.get<Nat>(args.value, 0));
                 logger.append([
-                    prefix # "sendEvent: args created, user=" # Principal.toText(args.user) # " token Id =" # Nat.toText(args.source.1)
-                    # " caller_doctoken_canister_id = " # caller_doctoken_canister_id # " value = " # rep_value # " comment " # Option.get<Text>(args.comment, "null")
+                    prefix # "sendEvent: args created, user=" # Principal.toText(args.user) # " token Id = " # Nat.toText(args.source.1)
+                    # " caller_doctoken_canister_id = " # args.source.0 # " value = " # rep_value # " comment " # Option.get<Text>(args.comment, "null")
                 ]);
 
                 // Call eventHandler method from subscriber canister
@@ -292,10 +311,5 @@ actor class Hub() {
             eventHub.subscribers.put(subscriber.callback, subscriber);
         };
         eventSubscribers := [];
-    };
-
-    public func clearOldestLogs(number : Nat) : async Bool {
-        logger.pop_buckets(number);
-        true;
     };
 };

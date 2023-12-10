@@ -53,8 +53,7 @@ module {
 		sender_hash : ?Text;
     };
 
-    public type Tag = Text;
-    public type Branch = Nat8;
+    public type Category = Text;
 
     public type CreateEvent = actor {
         creation : Event -> async Result.Result<[(Text, Text)], Text>;
@@ -81,7 +80,7 @@ module {
     };
     public type InstantReputationUpdateEvent = actor {
         // updateDocHistory : (DocHistoryArgs) -> async Result.Result<[(Text, Text)], Text>;
-        getTags : () -> async [(Tag, Branch)];
+        getCategories : () -> async [(Category, Text)];
         getMintingAccount : () -> async Principal;
         eventHandler : (ReputationChangeRequest) -> async Text;
     };

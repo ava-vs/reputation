@@ -12,7 +12,7 @@ module {
     metadata : [(Text, Metadata)];
   };
 
-   public type DocDAO = {
+  public type DocDAO = {
     categories : [Category];
     owner : Principal;
     metadata : [(Text, Metadata)];
@@ -154,7 +154,7 @@ module {
   public type TransferBurnError = TransferFromError or BurnError;
 
   public type CategoryError = CommonError or {
-    #CategoryAlreadyExists : { category : Category };
+    #CategoryAlreadyExists : { category : Category; cifer : Text };
     #CategoryDoesNotExist : { category : Category };
   };
 };

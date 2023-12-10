@@ -26,15 +26,7 @@ actor {
   type Document = Types.Document;
   type Category = Types.Category;
   type DocId = Types.DocId;
-  // type Tag = Types.Tag;
   type DocHistory = Types.DocumentHistory;
-
-  // type DocDAO = {
-  //   // main_branch : Tag;
-  //   tags : [Tag];
-  //   content : Text;
-  //   imageLink : Text;
-  // };
 
   type Account = Types.Account; //{ owner : Principal; subaccount : ?Subaccount };
   type Subaccount = Types.Subaccount; //Blob;
@@ -83,22 +75,22 @@ actor {
 
   let ic_rep_ledger = "ajw6q-6qaaa-aaaal-adgna-cai";
 
-  stable var documents : [Document] = [];
+  // stable var documents : [Document] = [];
   let emptyBuffer = Buffer.Buffer<(Principal, [DocId])>(0);
+  // TODO Stable cache might not be a good idea
   stable var userDocuments : [(Principal, [DocId])] = Buffer.toArray(emptyBuffer);
   var userDocumentMap = Map.HashMap<Principal, [DocId]>(10, Principal.equal, Principal.hash);
 
   // map docId - docHistory
   var docHistory = Map.HashMap<DocId, [DocHistory]>(10, Nat.equal, Hash.hash);
-  // map userId - [ Reputation ] or map userId - Map (branchId : value)
 
   var userReputation = Map.HashMap<Principal, Map.HashMap<Category, Nat>>(1, Principal.equal, Principal.hash);
-  // map tag : branchId
-  // var tagMap = TrieMap.TrieMap<Text, Branch>(Text.equal, Text.hash);
   var tagCifer = TrieMap.TrieMap<Text, Text>(Text.equal, Text.hash);
   var userSharedReputation = Map.HashMap<Principal, Map.HashMap<Category, Nat>>(1, Principal.equal, Principal.hash);
 
-  public shared query func getCiferByTag(tag : Text) : async ?Text {
+  let ciferSubaccount = Map.HashMap<Text, Subaccount>(1, Text.equal, Text.hash);
+
+  public shared query func getCiferByCategory(tag : Text) : async ?Text {
     tagCifer.get(tag);
   };
 
@@ -114,48 +106,45 @@ actor {
     Iter.toArray(newMap.entries());
   };
 
+  func ciferToAvaFormat(cifer : Text) : Text {
+    Utils.convertCiferToDottedFormat(cifer);
+  };
+
   public func getSubaccountByCategory(category : Category) : async ?Subaccount {
+    let cifer = await getCiferByCategory(category);
+
     //TODO check for collisions
-    let cifer = await getCiferByTag(category);
+
     switch (cifer) {
-      case null { null };
+      case null {
+        // Missing cifer means missing category in database
+        null;
+      };
       case (?c) {
-        var bytes = Blob.toArray(Text.encodeUtf8(c));
-        // Cut to 27 bytes
-        if (bytes.size() > 27) bytes := Array.subArray<Nat8>(bytes, 0, 26);
-        let padding = Array.freeze(Array.init<Nat8>((27 - bytes.size()), 0 : Nat8));
-        ?Blob.fromArray(Array.append(bytes, padding));
+        switch (ciferSubaccount.get(c)) {
+          case (null) {
+            // An existing CIFER that does not have a subaccount means that we need to create a new one
+            ?createNewSubaccount(category);
+          };
+          case (?sub) { ?sub };
+        };
       };
     };
   };
 
-  // public shared query func getTagByCategory(category :Text) : async ?Text {
-  //   let newMap = TrieMap.mapFilter<Text, Text, Text>(
-  //     tagCifer,
-  //     Text.equal,
-  //     Text.hash,
-  //     func(key, value) = if (Text.startsWith(value, #text branch)) { ?key } else {
-  //       null;
-  //     },
-  //   );
-  //   Iter.toArray(newMap.entries());
-  // };
-
-  // public shared query func getBranchByTag(tag : Text) : async ?Nat8 {
-  //   tagCifer.get(tag);
-  // };
-
-  // public shared query func getBranchByCifer(cifer : Text) : async ?Nat8 {
-  //   let newMap = TrieMap.mapFilter<Text, Text, Text>(
-  //     tagCifer,
-  //     Text.equal,
-  //     Text.hash,
-  //     func(key, value) = if (Text.startsWith(value, #text cifer)) { ?value } else {
-  //       null;
-  //     },
-  //   );
-  //   Iter.toArray(newMap.entries());
-  // };
+  func createNewSubaccount(cifer : Text) : Subaccount {
+    var bytes = Blob.toArray(Text.encodeUtf8(cifer));
+    // Cut to 32 bytes if encoded text is too long
+    if (bytes.size() > 32) bytes := Array.subArray<Nat8>(bytes, 0, 32);
+    // Pad with zeros if encoded text is too short
+    if (bytes.size() < 32) {
+      let padding = Array.freeze(Array.init<Nat8>((32 - bytes.size()), 0 : Nat8));
+      bytes := Array.append(bytes, padding);
+    };
+    let subaccount = Blob.fromArray(bytes);
+    ciferSubaccount.put(cifer, subaccount);
+    return subaccount;
+  };
 
   public func viewLogs(end : Nat) : async [Text] {
     let view = logger.view(0, end);
@@ -280,60 +269,60 @@ actor {
 
   // Doctoken part
 
-  public func getAllDocs() : async [Document] {
-    documents;
-  };
+  // public func getAllDocs() : async [Document] {
+  //   documents;
+  // };
 
-  public func getDocumentsByUser(user : Principal) : async [Document] {
-    let docIdList = Option.get(userDocumentMap.get(user), []);
-    var result = Buffer.Buffer<Document>(1);
-    label one for (documentId in docIdList.vals()) {
-      let document = Array.find<Document>(documents, func doc = Nat.equal(documentId, doc.tokenId));
-      switch (document) {
-        case null continue one;
-        case (?d) result.add(d);
-      };
-    };
-    Buffer.toArray(result);
-  };
+  // public func getDocumentsByUser(user : Principal) : async [Document] {
+  //   let docIdList = Option.get(userDocumentMap.get(user), []);
+  //   var result = Buffer.Buffer<Document>(1);
+  //   label one for (documentId in docIdList.vals()) {
+  //     let document = Array.find<Document>(documents, func doc = Nat.equal(documentId, doc.tokenId));
+  //     switch (document) {
+  //       case null continue one;
+  //       case (?d) result.add(d);
+  //     };
+  //   };
+  //   Buffer.toArray(result);
+  // };
 
-  public func getDocumentById(id : DocId) : async Types.Result<Document, Text> {
-    let document = Array.find<Document>(documents, func doc = Nat.equal(id, doc.tokenId));
-    switch (document) {
-      case null #Err("No documents found by id " # Nat.toText(id));
-      case (?doc) #Ok(doc);
-    };
-  };
+  // public func getDocumentById(id : DocId) : async Types.Result<Document, Text> {
+  //   let document = Array.find<Document>(documents, func doc = Nat.equal(id, doc.tokenId));
+  //   switch (document) {
+  //     case null #Err("No documents found by id " # Nat.toText(id));
+  //     case (?doc) #Ok(doc);
+  //   };
+  // };
 
-  public func getDocumentsByCategory(category : Category) : async [Document] {
-    // TODO check all categories in document, not only first one
-    let document = Array.find<Document>(documents, func doc = Text.equal(category, doc.categories[0]));
+  // public func getDocumentsByCategory(category : Category) : async [Document] {
+  //   // TODO check all categories in document, not only first one
+  //   let document = Array.find<Document>(documents, func doc = Text.equal(category, doc.categories[0]));
 
-    switch (document) {
-      case null [];
-      case (?doc)[doc];
-    };
-  };
+  //   switch (document) {
+  //     case null [];
+  //     case (?doc)[doc];
+  //   };
+  // };
 
-  public func setDocumentByUser(user : Principal, category : Category, document : Document) : async Types.Result<Document, Text> {
-    let nextId = documents.size();
-    let docList = Option.get(userDocumentMap.get(user), []);
-    let newTags = Buffer.Buffer<Category>(1);
-    newTags.add(category);
-    let existBranches = Buffer.fromArray<Category>(document.categories);
-    newTags.append(existBranches);
-    let newDoc = {
-      tokenId = nextId;
-      categories = Buffer.toArray(newTags);
-      owner = user;
-      metadata = document.metadata;
-    };
-    documents := Array.append(documents, [newDoc]);
-    let newList = Array.append(docList, [nextId]);
-    userDocumentMap.put(user, newList);
-    // TODO documents.add(newDoc) on postupgrade
-    return #Ok(newDoc);
-  };
+  // public func setDocumentByUser(user : Principal, category : Category, document : Document) : async Types.Result<Document, Text> {
+  //   // let nextId = documents.size();
+  //   let docList = Option.get(userDocumentMap.get(user), []);
+  //   let newTags = Buffer.Buffer<Category>(1);
+  //   newTags.add(category);
+  //   let existBranches = Buffer.fromArray<Category>(document.categories);
+  //   newTags.append(existBranches);
+  //   let newDoc = {
+  //     tokenId = nextId;
+  //     categories = Buffer.toArray(newTags);
+  //     owner = user;
+  //     metadata = document.metadata;
+  //   };
+  //   // documents := Array.append(documents, [newDoc]);
+  //   let newList = Array.append(docList, [nextId]);
+  //   userDocumentMap.put(user, newList);
+
+  //   return #Ok(newDoc);
+  // };
 
   //Method for event handling
 
@@ -348,20 +337,18 @@ actor {
     metadata : ?[(Text, Types.Metadata)];
   }) : async Text {
     let prefix = Utils.timestampToDate();
-    logger.append([prefix # " Method eventHandler starts, calling method updateDocHistory"]);
+    logger.append([prefix # " Method eventHandler starts, calling method checkDocument"]);
     // If reviewer is absent, then it is a Instant Reputation Change event
     switch (reviewer) {
       case (?r) {
         // TODO Add all checks here - doc, category-tag, reputation, etc
-
-        // TODO Move all checks to eventHandler
         let doc = switch (await checkDocument(source.0, source.1)) {
           case (#Err(err)) {
-            logger.append([prefix # " updateDocHistory: document check failed"]);
+            logger.append([prefix # " eventHandler: document check failed"]);
             return "Error: document check failed";
           };
           case (#Ok(doc)) {
-            logger.append([prefix # " updateDocHistory: document ok"]);
+            logger.append([prefix # " eventHandler: document ok"]);
             doc;
           };
         };
@@ -413,6 +400,7 @@ actor {
       value = value;
       comment = comment;
     };
+
     docHistory.put(doc.tokenId, Array.append(Option.get(docHistory.get(doc.tokenId), []), [newDocHistory]));
     logger.append([prefix # " updateDocHistory: checking tags"]);
 
@@ -450,7 +438,6 @@ actor {
     // TODO call canister and get document
 
     let check = await getAndCheckDocument(canisterId, docId);
-    //Array.find<Document>(documents, func doc = Nat.equal(docId, doc.docId));
     let doc = switch (check) {
       case null {
         #Err(#NotFound { message = "No document found by canister id " # canisterId; docId = docId });
@@ -460,101 +447,40 @@ actor {
   };
 
   func getAndCheckDocument(canisterId : Text, docId : DocId) : async ?Document {
+    logger.append([prefix # " rep: getAndCheckDocument starts, calling method getDocumentById with args: canisterId = " # canisterId # ", docId = " # Nat.toText(docId) # "\n"]);
     let canister : Types.Doctoken = actor (canisterId);
+    logger.append([prefix # " rep: getAndCheckDocument: calling canister with id " # canisterId]);
     let doc = await canister.getDocumentById(docId);
     switch (doc) {
       case null {
-        logger.append([prefix # " getAndCheckDocument: document not found by id " # Nat.toText(docId)]);
+        logger.append([prefix # " rep: getAndCheckDocument: getDocumentById returns: document not found by id " # Nat.toText(docId)]);
         null;
       };
       case (?doc) {
-        logger.append([prefix # " getAndCheckDocument: document found by id " # Nat.toText(docId)]);
+        logger.append([prefix # " rep: getAndCheckDocument: document found by id " # Nat.toText(docId)]);
         ?doc;
       };
     };
   };
 
-  // public func newDocument(user : Principal, doc : Types.DocDAO) : async Types.Result<DocId, Types.CommonError> {
-  //   let userDocs = userDocumentMap.get(user);
-  //   // TODO choose branch: chooseTag(preferBranch, doc);
-  //   let branch_opt = Nat.fromText(doc.tags[0]);
-  //   let branch = switch (branch_opt) {
-  //     case null return #Err(#NotFound { message = "Cannot find out the branch " # doc.tags[0]; docId = 0 });
-  //     case (?br) Nat8.fromNat(br);
-  //   };
-  //   let document = await setDocumentByUser(user, branch, doc);
-  //   return #Err(#TemporarilyUnavailable);
-  // };
-
-  // public func createDocument(user : Principal, branchs : [Nat8], content : Text, imageLink : Text) : async Document {
-  //   var tags = Buffer.Buffer<Text>(1);
-  //   for (item in branchs.vals()) {
-  //     tags.add(getTagByBranch(item));
-  //   };
-  //   let newDoc = {
-  //     owner = user;
-  //     tokenId = 0;
-  //     tags = Buffer.toArray(tags);
-  //     metadata = [("content", #Text(content)), ("imageLink", #Text(imageLink))];
-  //   };
-  // };
-
-  // Tag part
-  // public func getBranchByTagName(tag : Tag) : async Branch {
-  //   let prefix = Utils.timestampToDate();
-  //   let res = switch (tagMap.get(tag)) {
-  //     case null {
-  //       logger.append([prefix # " getBranchByTagName: branch not found by tag " # tag]);
-  //       Nat8.fromNat(0);
-  //     };
-  //     case (?br) {
-  //       logger.append([prefix # " getBranchByTagName: branch found by tag " # tag # " is " # Nat8.toText(br)]);
-  //       br;
-  //     };
-  //   };
-  //   res;
-  // };
-
-  // tag name to subaccount through aVa cifer e.g. Java -> Blob(1 02 003 004 000 000 000 000 000 0 0)
-  // func convertCategoryToSubaccount(tag : Text) : async Subaccount {
-  //   let cifer = getCiferByTag(tag); // 1 02 003 004
-  //   // Text.encodeUtf8(cifer);
-  //   var res : Text = cifer.vals()[0];
-  //   for (byte : Nat8 in cifer.vals()) {
-  //     // iterator over the Blob
-  //     res := res # "." # Nat8.toText(byte);
-  //   };
-  //   res;
-  // };
-
-  // func getTagByBranch(category : Category) : Tag {
-  //   for ((key, value) in tagMap.entries()) {
-  //     if (Nat8.equal(branch, value)) return key;
-  //   };
-  //   "0";
-  // };
-
-  func addCifer(category : Category) : Text {
-    let default_cifer = "1.7.1.1";
-    tagCifer.put(category, default_cifer);
-    default_cifer;
-  };
-
-  public func setNewTag(category : Category) : async Types.Result<(Category, Text), Types.CategoryError> {
-    let current_cifer = await getCiferByTag(category);
+  public func setNewTag(category : Category, cifer : Text) : async Types.Result<(Category, Text), Types.CategoryError> {
+    let current_cifer = await getCiferByCategory(category);
     switch (current_cifer) {
       case null {
         // TODO Create a hierarchical system of industries
-        // let newBranch = tagMap.size();
-        // tagMap.put(tag, Nat8.fromNat(newBranch));
-        let cifer = addCifer(category);
+        if (Text.equal(cifer, "")) {
+          let default_cifer = "1.7.1.1";
+          tagCifer.put(category, default_cifer);
+          return #Ok((category, default_cifer));
+        };
+        tagCifer.put(category, cifer);
         #Ok(category, cifer);
       };
-      case (?t) #Err(#CategoryAlreadyExists { category });
+      case (?t) #Err(#CategoryAlreadyExists { category; cifer = t });
     };
   };
 
-  public func getCategories() : async [(Category, Text)] {
+  public shared query func getCategories() : async [(Category, Text)] {
     let res = Buffer.Buffer<(Category, Text)>(1);
     for ((key, value) in tagCifer.entries()) {
       res.add(key, value);
@@ -597,15 +523,6 @@ actor {
     [byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)];
   };
 
-  // public func branchToSubaccount(branch : Nat8) : async Subaccount {
-  //   //TODO change logic to create subaccount by branch accorging to the spec
-  //   let prefix = Utils.timestampToDate();
-  //   logger.append([prefix # " Method branchToSubaccount starts for branch " # Nat8.toText(branch) # ", calling method beBytes"]);
-  //   let bytes = beBytes(Nat32.fromNat(Nat8.toNat(branch)));
-  //   let padding = Array.freeze(Array.init<Nat8>(28, 0 : Nat8));
-  //   Blob.fromArray(Array.append(bytes, padding));
-  // };
-
   func nullSubaccount() : async Subaccount {
     Blob.fromArrayMut(Array.init(32, 0 : Nat8));
   };
@@ -614,29 +531,6 @@ actor {
     let sub = await getSubaccountByCategory(category);
     let newAccount : Account = { owner = user; subaccount = sub };
   };
-
-  // func getBranchFromSubaccount(subaccount : ?Subaccount) : Nat8 {
-  //   let sub = switch (subaccount) {
-  //     case null return 0;
-  //     case (?sub) sub;
-  //   };
-  //   let bytes = Blob.toArray(sub);
-  //   let b0 = Nat32.fromNat(Nat8.toNat(bytes[0]));
-  //   let b1 = Nat32.fromNat(Nat8.toNat(bytes[1]));
-  //   let b2 = Nat32.fromNat(Nat8.toNat(bytes[2]));
-  //   let b3 = Nat32.fromNat(Nat8.toNat(bytes[3]));
-
-  //   let n = (b0 << 24) + (b1 << 16) + (b2 << 8) + b3;
-  //   Nat8.fromNat(Nat32.toNat(n));
-  // };
-
-  // func subaccountToNatArray(subaccount : Subaccount) : [Nat8] {
-  //   var buffer = Buffer.Buffer<Nat8>(0);
-  //   for (item in subaccount.vals()) {
-  //     buffer.add(item);
-  //   };
-  //   Buffer.toArray(buffer);
-  // };
 
   // Logic part
 
@@ -715,43 +609,25 @@ actor {
     #Ok(0);
   };
 
-  // func sendToken(from :
-  // // Ledger.
-  // Account, to :
-  // // Ledger.
-  // Account, amount :
-  // // Ledger.
-  // Tokens){
-  // //  : async Types.Result<TxIndex, Types.TransferFromError> {
-  //   let sender : ?
-  //   // Ledger.
-  //   Subaccount = from.subaccount;
-  //   let memo : ?
-  //   // Ledger.
-  //   Memo = null;
-  //   let fee : ?
-  //   // Ledger.
-  //   Tokens = null;
-  //   let created_at_time : ?
-  //   // Ledger.
-  //   Timestamp = ?Nat64.fromIntWrap(Time.now());
-  //   let a :
-  //   // Ledger.
-  //   Tokens = amount;
-  //   let acc :
-  //   // Ledger.
-  //   Account = to;
-  //   let res =
-  //   //  await
-  //   // Ledger.
-  //   // icrc2_transfer_from({
-  //   //   from = from;
-  //   //   to = to;
-  //   //   amount = amount;
-  //   //   fee = fee;
-  //   //   memo = memo;
-  //   //   created_at_time = created_at_time;
-  //   // });
+  // func sendToken(
+  //   from : Ledger.Account,
+  //   to : Ledger.Account,
+  //   amount : Ledger.Tokens,
+  // ) : async Types.Result<TxIndex, Types.TransferFromError> {
+  //   let sender : ?Ledger.Subaccount = from.subaccount;
+  //   let memo : ?Ledger.Memo = null;
+  //   let fee : ?Ledger.Tokens = null;
+  //   let created_at_time : ?Ledger.Timestamp = ?Nat64.fromIntWrap(Time.now());
+  //   let a : Ledger.Tokens = amount;
+  //   let acc : Ledger.Account = to;
+  //   let res = await Ledger.icrc2_transfer_from({
+  //     from = from;
+  //     to = to;
+  //     amount = amount;
+  //     fee = fee;
+  //     memo = memo;
+  //     created_at_time = created_at_time;
+  //   });
   //   ignore await awardIncenitive(from, 1);
   //   res;
   // };
@@ -896,6 +772,11 @@ actor {
 
   public func clearOldestLogs(number : Nat) : async Bool {
     logger.pop_buckets(number);
+    true;
+  };
+
+  public func clearAllLogs() : async Bool {
+    logger.clear();
     true;
   };
 };
