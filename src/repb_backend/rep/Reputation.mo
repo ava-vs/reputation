@@ -163,7 +163,6 @@ actor {
   };
 
   public func getReputationByCategory(user : Principal, category : Text) : async ?(Category, Nat) {
-    // Implement logic to get reputation value in a specific branch
     let res = await userBalanceByCategory(user, category);
     return ?(category, res);
   };
@@ -185,7 +184,7 @@ actor {
         logger.append([prefix # " setUserReputation: awardToken #Ok result was received: " # Nat.toText(id)]);
 
         logger.append([prefix # " setUserReputation: calling getReputationByBranch"]);
-        let bal = await getReputationByCategory(user, category);
+        let bal = Option.get(await getReputationByCategory(user, category), ("", 0)).1;
         if (bal >= 100) {
           updateSpecialistMap(user, category, bal);
           if (bal >= 500) updateExpertMap(user, category, bal);
@@ -193,11 +192,11 @@ actor {
         logger.append([prefix # " setUserReputation: result for: " # Principal.toText(user) # ", category = " # category]);
         let saveRepChangeResult = saveReputationChange(user, category, bal);
         let res = switch (bal) {
-          case null {
+          case (0) {
             logger.append([prefix # " setUserReputation: Error: getReputationByBranch result balance is null after award"]);
             0;
           };
-          case (?(branch, value)) {
+          case (value) {
             logger.append([prefix # " setUserReputation: getReputationByBranch result was received: category = " # category # ", value = " # Nat.toText(value)]);
             value;
           };
@@ -235,12 +234,19 @@ actor {
     };
   };
 
-  public shared query func getSpecialists() : async [(Principal, (Category, Nat))] {
-    specialistMap.entries.vals();
+  public shared query func getSpecialists() : async [(Principal, [(Category, Nat)])] {
+    Iter.toArray(specialistMap.entries());
   };
 
   public shared query func getSpecialistBy(user : Principal) : async (Principal, [(Category, Nat)]) {
-    specialistMap.entries.vals();
+    let result = switch (specialistMap.get(user)) {
+      case null (user, []);
+      case (?array)(user, array);
+    };
+  };
+
+  public shared query func getExperts() : async [(Principal, [(Category, Nat)])] {
+    Iter.toArray(expertMap.entries());
   };
 
   func saveReputationChange(user : Principal, category : Text, value : Nat) : (Category, Nat) {
@@ -365,7 +371,7 @@ actor {
     source : (Text, Nat); // (doctoken_canisterId, documentId)
     comment : ?Text;
     metadata : ?[(Text, Types.Metadata)];
-  }) : async Result.Result<Nat, Text> {
+  }) : async Types.Result<Nat, Text> {
     let prefix = Utils.timestampToDate();
     logger.append([prefix # " Method eventHandler starts, calling method checkDocument"]);
     // If reviewer is absent, then it is a Instant Reputation Change event
@@ -375,7 +381,7 @@ actor {
         let doc = switch (await checkDocument(source.0, source.1)) {
           case (#Err(err)) {
             logger.append([prefix # " eventHandler: document check failed"]);
-            return "Error: document check failed";
+            return #Err("Error: document check failed");
           };
           case (#Ok(doc)) {
             logger.append([prefix # " eventHandler: document ok"]);
