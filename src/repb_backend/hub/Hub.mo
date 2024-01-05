@@ -203,7 +203,7 @@ actor class Hub() {
                 logger.append([prefix # "sendEvent: case #InstantReputationUpdateEvent, start updateDocHistory"]);
                 let canister : E.InstantReputationUpdateEvent = actor (subscriber_canister_id);
                 logger.append([prefix # "sendEvent: canister created"]);
-                let args : E.ReputationChangeRequest = event.reputation_change;//{
+                let args : E.ReputationChangeRequest = event.reputation_change; //{
                 //     user : Principal = event.reputation_change.user;
                 //     reviewer : ?Principal =event.reputation_change.reviewer;
                 //     value : ?Nat = event.reputation_change.value;
@@ -212,7 +212,7 @@ actor class Hub() {
                 //     source : (Text, Nat) = (caller_doctoken_canister_id, event.reputation_change.source.1); // (doctoken_canisterId, documentId)
                 //     comment : ?Text = event.reputation_change.comment;
                 //     metadata = event.reputation_change.metadata;
-                    
+
                 // };
                 let rep_value = Nat.toText(Option.get<Nat>(args.value, 0));
                 logger.append([
@@ -222,15 +222,15 @@ actor class Hub() {
 
                 // Call eventHandler method from subscriber canister
                 let response = await canister.eventHandler(args);
-                logger.append([prefix # "sendEvent: eventHandler method has been executed. Response: " # response]);
-                if (response == "Event InstantReputationUpdateEvent was handled") {
-                    return #ok([(
-                        "updateDocHistory done",
-                        "reputation of " # Principal.toText(args.user)
-                        # " increased by " # rep_value,
+                logger.append([prefix # "sendEvent: eventHandler method has been executed."]);
+                switch (response) {
+                    case (#ok(balance)) return #ok([(
+                        "total reputation",
+                        Nat.toText(balance),
                     )]);
-                } else {
-                    return #err("updateDocHistory failed");
+                    case (#err(msg)) {
+                        return #err("updateDocHistory failed: " # msg);
+                    };
                 };
             };
             case (#AwaitingReputationUpdateEvent(_)) {

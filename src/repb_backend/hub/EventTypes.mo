@@ -82,7 +82,7 @@ module {
         // updateDocHistory : (DocHistoryArgs) -> async Result.Result<[(Text, Text)], Text>;
         getCategories : () -> async [(Category, Text)];
         getMintingAccount : () -> async Principal;
-        eventHandler : (ReputationChangeRequest) -> async Text;
+        eventHandler : (ReputationChangeRequest) -> async Result.Result<Nat, Text>;
     };
     public type AwaitingReputationUpdateEvent = actor {
         updateReputation : Event -> async Result.Result<[(Text, Text)], Text>;

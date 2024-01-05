@@ -18,8 +18,8 @@ import Text "mo:base/Text";
 import Time "mo:base/Time";
 import TrieMap "mo:base/TrieMap";
 
-import Logger "../hub/utils/Logger";
-import Utils "../hub/utils/Utils";
+import Logger "./utils/Logger";
+import Utils "./utils/Utils";
 import Types "./Types";
 
 actor {
@@ -75,7 +75,6 @@ actor {
 
   let ic_rep_ledger = "ajw6q-6qaaa-aaaal-adgna-cai";
 
-  // stable var documents : [Document] = [];
   let emptyBuffer = Buffer.Buffer<(Principal, [DocId])>(0);
   // TODO Stable cache might not be a good idea
   stable var userDocuments : [(Principal, [DocId])] = Buffer.toArray(emptyBuffer);
@@ -89,6 +88,10 @@ actor {
   var userSharedReputation = Map.HashMap<Principal, Map.HashMap<Category, Nat>>(1, Principal.equal, Principal.hash);
 
   let ciferSubaccount = Map.HashMap<Text, Subaccount>(1, Text.equal, Text.hash);
+
+  let specialistMap = Map.HashMap<Principal, [(Category, Nat)]>(1, Principal.equal, Principal.hash);
+
+  let expertMap = Map.HashMap<Principal, [(Category, Nat)]>(1, Principal.equal, Principal.hash);
 
   public shared query func getCiferByCategory(tag : Text) : async ?Text {
     tagCifer.get(tag);
@@ -165,18 +168,10 @@ actor {
     return ?(category, res);
   };
 
-  // func subaccountToNatArray(subaccount : Types.Subaccount) : [Nat8] {
-  //   var buffer = Buffer.Buffer<Nat8>(0);
-  //   for (item in subaccount.vals()) {
-  //     buffer.add(item);
-  //   };
-  //   Buffer.toArray(buffer);
-  // };
-
   // set reputation value for a given user in a specific branch
   func setUserReputation(reviewer : Principal, user : Principal, category : Text, value : Nat) : async Types.Result<(Types.Account, Nat), Types.TransferBurnError> {
-    logger.append([prefix # " setUserReputation starts, calling method branchToSubaccount"]);
-    let sub : ?Subaccount = await getSubaccountByCategory(category); //await getCiferByTag(category);
+    logger.append([prefix # " setUserReputation starts, calling method getSubaccountByCategory"]);
+    let sub : ?Subaccount = await getSubaccountByCategory(category);
     if (sub == null) return #Err(#NotFound { message = "Cannot find out the category " # category; docId = 0 });
     logger.append([prefix # " setUserReputation: calling method awardToken"]);
     let to : Types.Account = { owner = user; subaccount = sub };
@@ -187,15 +182,19 @@ actor {
     logger.append([prefix # " setUserReputation: awardToken result was received"]);
     switch (res) {
       case (#Ok(id)) {
-        logger.append([prefix # " setUserReputation: awardToken #Ok result was received: " # Nat.toText(id) # ", calling method saveReputationChange"]);
-        let saveRepChangeResult = saveReputationChange(user, category, value);
+        logger.append([prefix # " setUserReputation: awardToken #Ok result was received: " # Nat.toText(id)]);
+
         logger.append([prefix # " setUserReputation: calling getReputationByBranch"]);
         let bal = await getReputationByCategory(user, category);
+        if (bal >= 100) {
+          updateSpecialistMap(user, category, bal);
+          if (bal >= 500) updateExpertMap(user, category, bal);
+        };
         logger.append([prefix # " setUserReputation: result for: " # Principal.toText(user) # ", category = " # category]);
-
+        let saveRepChangeResult = saveReputationChange(user, category, bal);
         let res = switch (bal) {
           case null {
-            logger.append([prefix # " setUserReputation: getReputationByBranch result balance is 0"]);
+            logger.append([prefix # " setUserReputation: Error: getReputationByBranch result balance is null after award"]);
             0;
           };
           case (?(branch, value)) {
@@ -212,16 +211,47 @@ actor {
     };
   };
 
-  func saveReputationChange(user : Principal, category : Text, value : Nat) : Map.HashMap<Category, Nat> {
-    logger.append([prefix # " saveReputationChange: user " # Principal.toText(user) # ", category = " # category # ", value = " # Nat.toText(value)]);
-    let state = userReputation.get(user);
-    let map = switch (state) {
-      case null { Map.HashMap<Category, Nat>(0, Text.equal, Text.hash) };
-      case (?map) {
-        map.put(category, value);
-        map;
+  func updateSpecialistMap(user : Principal, category : Category, bal : Nat) {
+    let value = specialistMap.get(user);
+    switch (value) {
+      // New specialist added
+      case null specialistMap.put(user, [(category, bal)]);
+      case (?spec) {
+        let updatedCategory = Utils.pushIntoArray<(Category, Nat)>((category, bal), spec);
+        specialistMap.put(user, updatedCategory);
       };
     };
+  };
+
+  func updateExpertMap(user : Principal, category : Text, bal : Nat) {
+    let value = expertMap.get(user);
+    switch (value) {
+      // New expert added
+      case null expertMap.put(user, [(category, bal)]);
+      case (?spec) {
+        let updatedCategory = Utils.pushIntoArray<(Category, Nat)>((category, bal), spec);
+        expertMap.put(user, updatedCategory);
+      };
+    };
+  };
+
+  public shared query func getSpecialists() : async [(Principal, (Category, Nat))] {
+    specialistMap.entries.vals();
+  };
+
+  public shared query func getSpecialistBy(user : Principal) : async (Principal, [(Category, Nat)]) {
+    specialistMap.entries.vals();
+  };
+
+  func saveReputationChange(user : Principal, category : Text, value : Nat) : (Category, Nat) {
+    logger.append([prefix # " saveReputationChange: user " # Principal.toText(user) # ", category = " # category # ", value = " # Nat.toText(value)]);
+    let userCategories = switch (userReputation.get(user)) {
+      case (null) Map.HashMap<Category, Nat>(1, Text.equal, Text.hash);
+      case (?categories) categories;
+    };
+    userCategories.put(category, value);
+    userReputation.put(user, userCategories);
+    (category, value);
   };
 
   // universal method for award/burn reputation
@@ -335,7 +365,7 @@ actor {
     source : (Text, Nat); // (doctoken_canisterId, documentId)
     comment : ?Text;
     metadata : ?[(Text, Types.Metadata)];
-  }) : async Text {
+  }) : async Result.Result<Nat, Text> {
     let prefix = Utils.timestampToDate();
     logger.append([prefix # " Method eventHandler starts, calling method checkDocument"]);
     // If reviewer is absent, then it is a Instant Reputation Change event
@@ -365,26 +395,28 @@ actor {
           value = final_value;
           comment = final_comment;
         });
+
         switch (result) {
           case (#Ok(docHistory)) {
             logger.append([prefix # " eventHandler: updateDocHistory result was received"]);
-            "Event InstantReputationUpdateEvent was handled";
+            let user_balance = await getUserBalance(user);
+            #Ok(user_balance);
           };
           case (#Err(err)) {
             logger.append([prefix # " eventHandler: updateDocHistory result was received with error"]);
-            "Event InstantReputationUpdateEvent was handled with error";
+            #Err("Event InstantReputationUpdateEvent was handled with error");
           };
         };
       };
       case (null) {
         logger.append([prefix # " eventHandler: reviewer is null, cannot update reputation"]);
-        "Event InstantReputationUpdateEvent was handled with error";
+        #Err("Event InstantReputationUpdateEvent was handled with error");
       };
     };
   };
 
   //Key method for update reputation based on document
-  public func updateDocHistory({
+  func updateDocHistory({
     reviewer : Principal;
     user : Principal;
     doc : Document;
@@ -463,7 +495,7 @@ actor {
     };
   };
 
-  public func setNewTag(category : Category, cifer : Text) : async Types.Result<(Category, Text), Types.CategoryError> {
+  public func setNewCategory(category : Category, cifer : Text) : async Types.Result<(Category, Text), Types.CategoryError> {
     let current_cifer = await getCiferByCategory(category);
     switch (current_cifer) {
       case null {
