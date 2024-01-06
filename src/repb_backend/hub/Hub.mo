@@ -18,7 +18,7 @@ import List "utils/List";
 import Logger "utils/Logger";
 import Utils "utils/Utils";
 
-actor class Hub() {
+actor class Hub() = Self {
     type EventField = E.EventField;
 
     type Event = E.Event;
@@ -49,7 +49,7 @@ actor class Hub() {
     let rep_canister_id = "aoxye-tiaaa-aaaal-adgnq-cai";
     let default_doctoken_canister_id = "h5x3q-hyaaa-aaaal-adg6q-cai";
 
-    // subscribers : <canisterId ,
+    // subscriber : <canisterId , filter>
 
     var eventHub = {
         var events : [E.Event] = [];

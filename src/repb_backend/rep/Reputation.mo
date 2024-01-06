@@ -16,11 +16,12 @@ import Option "mo:base/Option";
 import Principal "mo:base/Principal";
 import Text "mo:base/Text";
 import Time "mo:base/Time";
+import Trie "mo:base/Trie";
 import TrieMap "mo:base/TrieMap";
 
+import Types "./Types";
 import Logger "./utils/Logger";
 import Utils "./utils/Utils";
-import Types "./Types";
 
 actor {
   type Document = Types.Document;
@@ -64,6 +65,11 @@ actor {
 
   type TransferFromError = Ledger.TransferFromError;
 
+  type Trie<K, V> = Trie.Trie<K, V>;
+  type Key<K> = Trie.Key<K>;
+
+  type Set<T> = Trie.Trie<T, ()>;
+
   // Logger
 
   stable var state : Logger.State<Text> = Logger.new<Text>(0, null);
@@ -74,6 +80,8 @@ actor {
   // };
 
   let ic_rep_ledger = "ajw6q-6qaaa-aaaal-adgna-cai";
+  let default_hub_canister = Principal.fromText("a3qjj-saaaa-aaaal-adgoa-cai");
+  let default_minting_account = Principal.fromText("bs3e6-4i343-voosn-wogd7-6kbdg-mctak-hn3ws-k7q7f-fye2e-uqeyh-yae");
 
   let emptyBuffer = Buffer.Buffer<(Principal, [DocId])>(0);
   // TODO Stable cache might not be a good idea
@@ -93,11 +101,42 @@ actor {
 
   let expertMap = Map.HashMap<Principal, [(Category, Nat)]>(1, Principal.equal, Principal.hash);
 
-  public shared query func getCiferByCategory(tag : Text) : async ?Text {
+  // Whitelist
+  private func _keyFromPrincipal(p : Principal) : Key<Principal> {
+    { hash = Principal.hash(p); key = p };
+  };
+
+  private func initWhitelist() : Set<Principal> {
+    let emptyTrie = Trie.empty<Principal, ()>();
+    let trieWithFirstKey = Trie.put(emptyTrie, _keyFromPrincipal(default_hub_canister), Principal.equal, ()).0;
+    let trieWithSecondKey = Trie.put(trieWithFirstKey, _keyFromPrincipal(default_minting_account), Principal.equal, ()).0;
+    return trieWithSecondKey;
+  };
+
+  private stable var whitelist : Set<Principal> = initWhitelist();
+
+  public shared ({ caller }) func addUser(userId : Principal) : async Bool {
+    if (await isUserInWhitelist(caller)) whitelist := Trie.put(whitelist, _keyFromPrincipal userId, Principal.equal, ()).0;
+    await isUserInWhitelist(userId);
+  };
+
+  public shared ({ caller }) func removeUser(userId : Principal) : async Bool {
+    if ((await isUserInWhitelist(caller)) and Trie.size(whitelist) > 1) whitelist := Trie.remove(whitelist, _keyFromPrincipal userId, Principal.equal).0;
+    not (await isUserInWhitelist(userId));
+  };
+
+  public query func isUserInWhitelist(userId : Principal) : async Bool {
+    switch (Trie.get(whitelist, _keyFromPrincipal(userId), Principal.equal)) {
+      case (null) { false }; // User not found
+      case (_) { true }; // User found
+    };
+  };
+
+  public query func getCiferByCategory(tag : Text) : async ?Text {
     tagCifer.get(tag);
   };
 
-  public shared query func getTagByCifer(cifer : Text) : async [(Text, Text)] {
+  public query func getTagByCifer(cifer : Text) : async [(Text, Text)] {
     let newMap = TrieMap.mapFilter<Text, Text, Text>(
       tagCifer,
       Text.equal,
@@ -234,19 +273,26 @@ actor {
     };
   };
 
-  public shared query func getSpecialists() : async [(Principal, [(Category, Nat)])] {
+  public query func getSpecialists() : async [(Principal, [(Category, Nat)])] {
     Iter.toArray(specialistMap.entries());
   };
 
-  public shared query func getSpecialistBy(user : Principal) : async (Principal, [(Category, Nat)]) {
+  public query func getSpecialistCategories(user : Principal) : async (Principal, [(Category, Nat)]) {
     let result = switch (specialistMap.get(user)) {
       case null (user, []);
       case (?array)(user, array);
     };
   };
 
-  public shared query func getExperts() : async [(Principal, [(Category, Nat)])] {
+  public query func getExperts() : async [(Principal, [(Category, Nat)])] {
     Iter.toArray(expertMap.entries());
+  };
+
+  public query func getExpertCategories(user : Principal) : async (Principal, [(Category, Nat)]) {
+    let result = switch (expertMap.get(user)) {
+      case null (user, []);
+      case (?array)(user, array);
+    };
   };
 
   func saveReputationChange(user : Principal, category : Text, value : Nat) : (Category, Nat) {
@@ -260,25 +306,9 @@ actor {
     (category, value);
   };
 
-  // universal method for award/burn reputation
-  // public func changeReputation(user : Principal, branchId : Category, value : Int) : async Types.ChangeResult {
-  //   let res : Types.Change = (user, branchId, value);
-  //   // TODO validation: check ownership
-
-  //   // TODO get exist reputation : getUserReputation
-
-  //   // TODO change reputation:  setUserReputation
-
-  //   // ?TODO save new state
-
-  //   // return new state
-
-  //   return #Ok(res);
-  // };
-
   // Shared part
 
-  public func sharedReputationDistrube() : async Types.Result<Text, Types.TransferBurnError> {
+  func sharedReputationDistrube() : async Types.Result<Text, Types.TransferBurnError> {
     // let default_acc = { owner = Principal.fromText("aaaaa-aa"); subaccount = null };
     var res = #Ok("Shared ");
     var sum = 0;
@@ -303,66 +333,9 @@ actor {
     return #Ok("Tokens were shared  to " # Nat.toText(sum) # " accounts");
   };
 
-  // Doctoken part
-
-  // public func getAllDocs() : async [Document] {
-  //   documents;
-  // };
-
-  // public func getDocumentsByUser(user : Principal) : async [Document] {
-  //   let docIdList = Option.get(userDocumentMap.get(user), []);
-  //   var result = Buffer.Buffer<Document>(1);
-  //   label one for (documentId in docIdList.vals()) {
-  //     let document = Array.find<Document>(documents, func doc = Nat.equal(documentId, doc.tokenId));
-  //     switch (document) {
-  //       case null continue one;
-  //       case (?d) result.add(d);
-  //     };
-  //   };
-  //   Buffer.toArray(result);
-  // };
-
-  // public func getDocumentById(id : DocId) : async Types.Result<Document, Text> {
-  //   let document = Array.find<Document>(documents, func doc = Nat.equal(id, doc.tokenId));
-  //   switch (document) {
-  //     case null #Err("No documents found by id " # Nat.toText(id));
-  //     case (?doc) #Ok(doc);
-  //   };
-  // };
-
-  // public func getDocumentsByCategory(category : Category) : async [Document] {
-  //   // TODO check all categories in document, not only first one
-  //   let document = Array.find<Document>(documents, func doc = Text.equal(category, doc.categories[0]));
-
-  //   switch (document) {
-  //     case null [];
-  //     case (?doc)[doc];
-  //   };
-  // };
-
-  // public func setDocumentByUser(user : Principal, category : Category, document : Document) : async Types.Result<Document, Text> {
-  //   // let nextId = documents.size();
-  //   let docList = Option.get(userDocumentMap.get(user), []);
-  //   let newTags = Buffer.Buffer<Category>(1);
-  //   newTags.add(category);
-  //   let existBranches = Buffer.fromArray<Category>(document.categories);
-  //   newTags.append(existBranches);
-  //   let newDoc = {
-  //     tokenId = nextId;
-  //     categories = Buffer.toArray(newTags);
-  //     owner = user;
-  //     metadata = document.metadata;
-  //   };
-  //   // documents := Array.append(documents, [newDoc]);
-  //   let newList = Array.append(docList, [nextId]);
-  //   userDocumentMap.put(user, newList);
-
-  //   return #Ok(newDoc);
-  // };
-
   //Method for event handling
 
-  public func eventHandler({
+  public shared ({ caller }) func eventHandler({
     user : Principal;
     reviewer : ?Principal;
     value : ?Nat;
@@ -372,6 +345,8 @@ actor {
     comment : ?Text;
     metadata : ?[(Text, Types.Metadata)];
   }) : async Types.Result<Nat, Text> {
+    // Only whitelisted canisters allow
+    if (not (await isUserInWhitelist(caller))) return #Err("Unauthorized");
     let prefix = Utils.timestampToDate();
     logger.append([prefix # " Method eventHandler starts, calling method checkDocument"]);
     // If reviewer is absent, then it is a Instant Reputation Change event
@@ -458,7 +433,7 @@ actor {
     };
   };
 
-  public func getDocHistory(docId : DocId) : async [DocHistory] {
+  public query func getDocHistory(docId : DocId) : async [DocHistory] {
     Option.get(docHistory.get(docId), []);
   };
 
