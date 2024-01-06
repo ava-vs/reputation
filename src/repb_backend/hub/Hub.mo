@@ -86,27 +86,30 @@ actor class Hub() = Self {
         eventHub.subscribers.delete(principal);
     };
 
-    public shared ({ caller }) func emitEvent(event : E.Event) : async [Subscriber] {
+    public shared ({ caller }) func emitEvent(event : E.Event) : async Types.Result<[(Nat, Nat)], Text> {
         // TODO save publisher+his doctoken to hub
         logger.append([prefix # "Starting method emitEvent"]);
         eventHub.events := Array.append(eventHub.events, [event]);
 
-        let buffer = Buffer.Buffer<Subscriber>(0);
+        let buffer = Buffer.Buffer<(Nat, Nat)>(0);
         for (subscriber in eventHub.subscribers.vals()) {
             // TODO check subscriber
             logger.append([prefix # "emitEvent: check subscriber " # Principal.toText(subscriber.callback) # " with filter " # subscriber.filter.fieldFilters[0].name]);
 
             if (isEventMatchFilter(event, subscriber.filter)) {
                 logger.append([prefix # "emitEvent: event matched"]);
-                buffer.add(subscriber);
+
                 var canister_doctoken = Principal.toText(caller);
                 if (Principal.fromText("2vxsx-fae") == caller) canister_doctoken := default_doctoken_canister_id;
                 let response = await sendEvent(event.reputation_change.reviewer, event, canister_doctoken, subscriber.callback);
+                switch (response) {
+                    case (#Ok(array)) { buffer.add(array[0]) };
+                    case (#Err(err)) { return #Err(err) };
+                };
             };
-
         };
 
-        return Buffer.toArray(buffer);
+        return #Ok(Buffer.toArray<(Nat, Nat)>(buffer));
     };
 
     func eventNameToText(eventName : EventName) : Text {
@@ -165,55 +168,24 @@ actor class Hub() = Self {
         return true;
     };
 
-    // TEST sendEvent
-
-    // public func testSendEvent(flag : Nat) : async Text {
-    //     let canister : E.InstantReputationUpdateEvent = actor ("aoxye-tiaaa-aaaal-adgnq-cai");
-    //     let args : E.DocHistoryArgs = {
-    //         reviewer = Principal.fromText("bs3e6-4i343-voosn-wogd7-6kbdg-mctak-hn3ws-k7q7f-fye2e-uqeyh-yae");
-    //         user = Principal.fromText("bs3e6-4i343-voosn-wogd7-6kbdg-mctak-hn3ws-k7q7f-fye2e-uqeyh-yae");
-    //         docId = 1;
-    //         caller_doctoken_canister_id = "aaaaa-aa";
-    //         value = 10;
-    //         comment = "Test passed";
-    //     };
-    //     let response = await canister.getMintingAccount();
-    //     if (flag == 1) return "test 1 done";
-    //     if (flag == 0) {
-    //         return "ok";
-    //     };
-    //     if (flag == 3) { return Principal.toText(response) };
-    //     "unknown";
-    // };
-
-    func sendEvent(reviwer : ?Principal, event : E.Event, caller_doctoken_canister_id : Text, canisterId : Principal) : async Types.Result<[(Text, Text)], Text> {
+    func sendEvent(reviwer : ?Principal, event : E.Event, caller_doctoken_canister_id : Text, canisterId : Principal) : async Types.Result<[(Nat, Nat)], Text> {
 
         logger.append([prefix # "Starting method sendEvent"]);
         let subscriber_canister_id = Principal.toText(canisterId);
         switch (event.eventType) {
-            case (#CreateEvent(_)) {
-                let canister : E.CreateEvent = actor (subscriber_canister_id);
-                await canister.creation(event);
-            };
-            case (#BurnEvent(_)) {
-                let canister : E.BurnEvent = actor (subscriber_canister_id);
-                await canister.burn(event);
-            };
+            // case (#CreateEvent(_)) {
+            //     // let canister : E.CreateEvent = actor (subscriber_canister_id);
+            //     // await canister.creation(event);
+            // };
+            // case (#BurnEvent(_)) {
+            //     // let canister : E.BurnEvent = actor (subscriber_canister_id);
+            //     // await canister.burn(event);
+            // };
             case (#InstantReputationUpdateEvent(_)) {
                 logger.append([prefix # "sendEvent: case #InstantReputationUpdateEvent, start updateDocHistory"]);
                 let canister : E.InstantReputationUpdateEvent = actor (subscriber_canister_id);
                 logger.append([prefix # "sendEvent: canister created"]);
-                let args : E.ReputationChangeRequest = event.reputation_change; //{
-                //     user : Principal = event.reputation_change.user;
-                //     reviewer : ?Principal =event.reputation_change.reviewer;
-                //     value : ?Nat = event.reputation_change.value;
-                //     category : Text = event.reputation_change.category;
-                //     timestamp : Nat = event.reputation_change.timestamp;
-                //     source : (Text, Nat) = (caller_doctoken_canister_id, event.reputation_change.source.1); // (doctoken_canisterId, documentId)
-                //     comment : ?Text = event.reputation_change.comment;
-                //     metadata = event.reputation_change.metadata;
-
-                // };
+                let args : E.ReputationChangeRequest = event.reputation_change;
                 let rep_value = Nat.toText(Option.get<Nat>(args.value, 0));
                 logger.append([
                     prefix # "sendEvent: args created, user=" # Principal.toText(args.user) # " token Id = " # Nat.toText(args.source.1)
@@ -225,18 +197,18 @@ actor class Hub() = Self {
                 logger.append([prefix # "sendEvent: eventHandler method has been executed."]);
                 switch (response) {
                     case (#Ok(balance)) return #Ok([(
-                        "total reputation",
-                        Nat.toText(balance),
+                        0,
+                        balance,
                     )]);
                     case (#Err(msg)) {
-                        return #Err("updateDocHistory failed: " # msg);
+                        return #Err("Update failed: " # msg);
                     };
                 };
             };
-            case (#AwaitingReputationUpdateEvent(_)) {
-                let canister : E.AwaitingReputationUpdateEvent = actor (subscriber_canister_id);
-                let response = await canister.updateReputation(event);
-            };
+            // case (#AwaitingReputationUpdateEvent(_)) {
+            //     let canister : E.AwaitingReputationUpdateEvent = actor (subscriber_canister_id);
+            //     let response = await canister.updateReputation(event);
+            // };
             // TODO Add other types here
             case _ {
                 return #Err("Unknown Event Type");
