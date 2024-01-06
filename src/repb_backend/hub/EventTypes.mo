@@ -48,47 +48,52 @@ module {
     public type Event = {
         eventType : EventName;
         topics : [EventField];
-		details : ?Text;
+        details : ?Text;
         reputation_change : ReputationChangeRequest;
-		sender_hash : ?Text;
+        sender_hash : ?Text;
     };
 
     public type Category = Text;
 
+    public type Result<S, E> = {
+        #Ok : S;
+        #Err : E;
+    };
+
     public type CreateEvent = actor {
-        creation : Event -> async Result.Result<[(Text, Text)], Text>;
+        creation : Event -> async Result<[(Text, Text)], Text>;
     };
 
     public type BurnEvent = actor {
-        burn : Event -> async Result.Result<[(Text, Text)], Text>;
+        burn : Event -> async Result<[(Text, Text)], Text>;
     };
 
     public type CollectionCreatedEvent = actor {
-        collectionCreated : Event -> async Result.Result<[(Text, Text)], Text>;
+        collectionCreated : Event -> async Result<[(Text, Text)], Text>;
     };
     public type CollectionUpdatedEvent = actor {
-        collectionUpdated : Event -> async Result.Result<[(Text, Text)], Text>;
+        collectionUpdated : Event -> async Result<[(Text, Text)], Text>;
     };
     public type CollectionDeletedEvent = actor {
-        collectionDeleted : Event -> async Result.Result<[(Text, Text)], Text>;
+        collectionDeleted : Event -> async Result<[(Text, Text)], Text>;
     };
     public type AddToCollectionEvent = actor {
-        addToCollection : Event -> async Result.Result<[(Text, Text)], Text>;
+        addToCollection : Event -> async Result<[(Text, Text)], Text>;
     };
     public type RemoveFromCollectionEvent = actor {
-        removeFromCollection : Event -> async Result.Result<[(Text, Text)], Text>;
+        removeFromCollection : Event -> async Result<[(Text, Text)], Text>;
     };
     public type InstantReputationUpdateEvent = actor {
-        // updateDocHistory : (DocHistoryArgs) -> async Result.Result<[(Text, Text)], Text>;
+        // updateDocHistory : (DocHistoryArgs) -> async Result<[(Text, Text)], Text>;
         getCategories : () -> async [(Category, Text)];
         getMintingAccount : () -> async Principal;
-        eventHandler : (ReputationChangeRequest) -> async Result.Result<Nat, Text>;
+        eventHandler : (ReputationChangeRequest) -> async Result<Nat, Text>;
     };
     public type AwaitingReputationUpdateEvent = actor {
-        updateReputation : Event -> async Result.Result<[(Text, Text)], Text>;
+        updateReputation : Event -> async Result<[(Text, Text)], Text>;
     };
     public type FeedbackSubmissionEvent = actor {
-        feedbackSubmission : Event -> async Result.Result<[(Text, Text)], Text>;
+        feedbackSubmission : Event -> async Result<[(Text, Text)], Text>;
     };
 
     public type Events = {

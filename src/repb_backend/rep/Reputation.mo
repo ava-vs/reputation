@@ -381,6 +381,7 @@ actor {
           case (#Ok(docHistory)) {
             logger.append([prefix # " eventHandler: updateDocHistory result was received"]);
             let user_balance = await getUserBalance(user);
+            logger.append([prefix # " eventHandler: new user balance was received: " # Nat.toText(user_balance)]);
             #Ok(user_balance);
           };
           case (#Err(err)) {

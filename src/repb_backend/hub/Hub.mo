@@ -186,7 +186,7 @@ actor class Hub() = Self {
     //     "unknown";
     // };
 
-    func sendEvent(reviwer : ?Principal, event : E.Event, caller_doctoken_canister_id : Text, canisterId : Principal) : async Result.Result<[(Text, Text)], Text> {
+    func sendEvent(reviwer : ?Principal, event : E.Event, caller_doctoken_canister_id : Text, canisterId : Principal) : async Types.Result<[(Text, Text)], Text> {
 
         logger.append([prefix # "Starting method sendEvent"]);
         let subscriber_canister_id = Principal.toText(canisterId);
@@ -224,12 +224,12 @@ actor class Hub() = Self {
                 let response = await canister.eventHandler(args);
                 logger.append([prefix # "sendEvent: eventHandler method has been executed."]);
                 switch (response) {
-                    case (#ok(balance)) return #ok([(
+                    case (#Ok(balance)) return #Ok([(
                         "total reputation",
                         Nat.toText(balance),
                     )]);
-                    case (#err(msg)) {
-                        return #err("updateDocHistory failed: " # msg);
+                    case (#Err(msg)) {
+                        return #Err("updateDocHistory failed: " # msg);
                     };
                 };
             };
@@ -239,7 +239,7 @@ actor class Hub() = Self {
             };
             // TODO Add other types here
             case _ {
-                return #err("Unknown Event Type");
+                return #Err("Unknown Event Type");
             };
         };
     };
