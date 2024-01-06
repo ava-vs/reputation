@@ -173,14 +173,6 @@ actor class Hub() = Self {
         logger.append([prefix # "Starting method sendEvent"]);
         let subscriber_canister_id = Principal.toText(canisterId);
         switch (event.eventType) {
-            // case (#CreateEvent(_)) {
-            //     // let canister : E.CreateEvent = actor (subscriber_canister_id);
-            //     // await canister.creation(event);
-            // };
-            // case (#BurnEvent(_)) {
-            //     // let canister : E.BurnEvent = actor (subscriber_canister_id);
-            //     // await canister.burn(event);
-            // };
             case (#InstantReputationUpdateEvent(_)) {
                 logger.append([prefix # "sendEvent: case #InstantReputationUpdateEvent, start updateDocHistory"]);
                 let canister : E.InstantReputationUpdateEvent = actor (subscriber_canister_id);
@@ -197,7 +189,7 @@ actor class Hub() = Self {
                 logger.append([prefix # "sendEvent: eventHandler method has been executed."]);
                 switch (response) {
                     case (#Ok(balance)) return #Ok([(
-                        0,
+                        args.source.1,
                         balance,
                     )]);
                     case (#Err(msg)) {
