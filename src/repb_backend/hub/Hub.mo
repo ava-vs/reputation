@@ -1,6 +1,7 @@
 import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import Buffer "mo:base/Buffer";
+import Cycles "mo:base/ExperimentalCycles";
 import HashMap "mo:base/HashMap";
 import Int "mo:base/Int";
 import Iter "mo:base/Iter";
@@ -43,12 +44,10 @@ actor class Hub() = Self {
     var batchMakingDurationNano : Int = 1_000_000_000;
     var batchMaxSizeBytes : Nat = 500_000;
 
-    // var listeners : [FilterListenersPair] = [];
-
     let default_principal : Principal = Principal.fromText("aaaaa-aa");
     let rep_canister_id = "aoxye-tiaaa-aaaal-adgnq-cai";
     let default_doctoken_canister_id = "h5x3q-hyaaa-aaaal-adg6q-cai";
-
+    let default_reputation_fee = 55_000_000;
     // subscriber : <canisterId , filter>
 
     var eventHub = {
@@ -76,7 +75,9 @@ actor class Hub() = Self {
         tags;
     };
 
-    public func subscribe(subscriber : Subscriber) : async Bool {
+    public shared func subscribe(subscriber : Subscriber) : async Bool {
+        let amount = Cycles.available();
+        ignore Cycles.accept(amount);
         //TODO check the subscriber for the required methods
         eventHub.subscribers.put(subscriber.callback, subscriber);
         true;
@@ -87,6 +88,9 @@ actor class Hub() = Self {
     };
 
     public shared ({ caller }) func emitEvent(event : E.Event) : async Types.Result<[(Nat, Nat)], Text> {
+        let amount = Cycles.available();
+        ignore Cycles.accept(amount);
+
         // TODO save publisher+his doctoken to hub
         logger.append([prefix # "Starting method emitEvent"]);
         eventHub.events := Array.append(eventHub.events, [event]);
@@ -185,6 +189,7 @@ actor class Hub() = Self {
                 ]);
 
                 // Call eventHandler method from subscriber canister
+                Cycles.add(default_reputation_fee);
                 let response = await canister.eventHandler(args);
                 logger.append([prefix # "sendEvent: eventHandler method has been executed."]);
                 switch (response) {
@@ -254,12 +259,6 @@ actor class Hub() = Self {
             },
         );
     };
-
-    // func updateDocHistory(event : E.Event) : async Types.Result<Types.DocHistory, Types.CommonError> {
-    //     // TODO - add to InstantReputationUpdateEvent event handler rep.updateDocHistory();
-
-    //     return #Err(#TemporarilyUnavailable);
-    // };
 
     stable var eventState : [E.Event] = [];
     stable var eventSubscribers : [Subscriber] = [];
