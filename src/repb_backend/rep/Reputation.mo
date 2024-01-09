@@ -3,6 +3,7 @@ import Ledger "canister:ledger";
 import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import Buffer "mo:base/Buffer";
+import Cycles "mo:base/ExperimentalCycles";
 import Hash "mo:base/Hash";
 import Map "mo:base/HashMap";
 import HashMap "mo:base/HashMap";
@@ -82,6 +83,8 @@ actor {
   let ic_rep_ledger = "ajw6q-6qaaa-aaaal-adgna-cai";
   let default_hub_canister = Principal.fromText("a3qjj-saaaa-aaaal-adgoa-cai");
   let default_minting_account = Principal.fromText("bs3e6-4i343-voosn-wogd7-6kbdg-mctak-hn3ws-k7q7f-fye2e-uqeyh-yae");
+
+  let default_award_fee = 5_000_000;
 
   let emptyBuffer = Buffer.Buffer<(Principal, [DocId])>(0);
   // TODO Stable cache might not be a good idea
@@ -345,6 +348,9 @@ actor {
     comment : ?Text;
     metadata : ?[(Text, Types.Metadata)];
   }) : async Types.Result<Nat, Text> {
+    let amount = Cycles.available();
+    ignore Cycles.accept(amount);
+
     // Only whitelisted canisters allow
     if (not (await isUserInWhitelist(caller))) return #Err("Unauthorized");
     let prefix = Utils.timestampToDate();
@@ -611,6 +617,7 @@ actor {
     logger.append([prefix # " awardToken: with args: " # Principal.toText(acc.owner) # ", amount = " # Nat.toText(amount)]);
     let pre_mint_account = await getMintingAccountPrincipal();
 
+    Cycles.add(default_award_fee);
     let res = await Ledger.icrc2_transfer_from({
       from = { owner = pre_mint_account; subaccount = null };
       to = acc;
