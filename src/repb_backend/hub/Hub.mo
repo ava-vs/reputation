@@ -47,7 +47,9 @@ actor class Hub() = Self {
     let default_principal : Principal = Principal.fromText("aaaaa-aa");
     let rep_canister_id = "aoxye-tiaaa-aaaal-adgnq-cai";
     let default_doctoken_canister_id = "h5x3q-hyaaa-aaaal-adg6q-cai";
-    let default_reputation_fee = 55_000_000;
+
+    let default_reputation_fee = 550_000_000;
+
     // subscriber : <canisterId , filter>
 
     var eventHub = {
@@ -78,7 +80,7 @@ actor class Hub() = Self {
     public shared func subscribe(subscriber : Subscriber) : async Bool {
         let amount = Cycles.available();
         ignore Cycles.accept(amount);
-        //TODO check the subscriber for the required methods
+
         eventHub.subscribers.put(subscriber.callback, subscriber);
         true;
     };
@@ -89,16 +91,17 @@ actor class Hub() = Self {
 
     public shared ({ caller }) func emitEvent(event : E.Event) : async Types.Result<[(Nat, Nat)], Text> {
         let amount = Cycles.available();
-        ignore Cycles.accept(amount);
 
-        // TODO save publisher+his doctoken to hub
-        logger.append([prefix # "Starting method emitEvent"]);
-        eventHub.events := Array.append(eventHub.events, [event]);
+        if (amount < default_reputation_fee * 1_000 + 300_000_000_000) {
+            return #Err("Not enough cycles to emit event");
+        };
+        ignore Cycles.accept(amount);
+  
+        eventHub.events := Utils.pushIntoArray(event, eventHub.events);
 
         let buffer = Buffer.Buffer<(Nat, Nat)>(0);
         for (subscriber in eventHub.subscribers.vals()) {
-            // TODO check subscriber
-            logger.append([prefix # "emitEvent: check subscriber " # Principal.toText(subscriber.callback) # " with filter " # subscriber.filter.fieldFilters[0].name]);
+            // logger.append([prefix # "emitEvent: check subscriber " # Principal.toText(subscriber.callback) # " with filter " # subscriber.filter.fieldFilters[0].name]);
 
             if (isEventMatchFilter(event, subscriber.filter)) {
                 logger.append([prefix # "emitEvent: event matched"]);
@@ -139,10 +142,10 @@ actor class Hub() = Self {
 
     func isEventMatchFilter(event : E.Event, filter : EventFilter) : Bool {
 
-        logger.append([prefix # "Starting method isEventMatchFilter"]);
+        // logger.append([prefix # "Starting method isEventMatchFilter"]);
 
-        logger.append([prefix # " isEventMatchFilter: Checking subsriber's event type", eventNameToText(Option.get<E.EventName>(filter.eventType, #Unknown))]);
-        logger.append([prefix # " with event type: ", eventNameToText(event.eventType)]);
+        // logger.append([prefix # " isEventMatchFilter: Checking subsriber's event type", eventNameToText(Option.get<E.EventName>(filter.eventType, #Unknown))]);
+        // logger.append([prefix # " with event type: ", eventNameToText(event.eventType)]);
         switch (filter.eventType) {
             case (null) {
                 logger.append([prefix # "isEventMatchFilter: Event type is null"]);
@@ -152,9 +155,9 @@ actor class Hub() = Self {
                 return false;
             };
         };
-        logger.append([prefix # " isEventMatchFilter: Event type matched"]);
-        logger.append([prefix # " isEventMatchFilter: Checking subsriber's field filters"]);
-        logger.append([prefix # " isEventMatchFilter: event topic 1: name = " # event.topics[0].name # " , value = " # Nat8.toText(Blob.toArray(event.topics[0].value)[0])]);
+        // logger.append([prefix # " isEventMatchFilter: Event type matched"]);
+        // logger.append([prefix # " isEventMatchFilter: Checking subsriber's field filters"]);
+        // logger.append([prefix # " isEventMatchFilter: event topic 1: name = " # event.topics[0].name # " , value = " # Nat8.toText(Blob.toArray(event.topics[0].value)[0])]);
         for (field in filter.fieldFilters.vals()) {
             logger.append([prefix # "isEventMatchFilter: Checking field", field.name, Nat8.toText(Blob.toArray(field.value)[0])]);
             let found = Array.find<EventField>(
@@ -174,13 +177,13 @@ actor class Hub() = Self {
 
     func sendEvent(reviwer : ?Principal, event : E.Event, caller_doctoken_canister_id : Text, canisterId : Principal) : async Types.Result<[(Nat, Nat)], Text> {
 
-        logger.append([prefix # "Starting method sendEvent"]);
+        // logger.append([prefix # "Starting method sendEvent"]);
         let subscriber_canister_id = Principal.toText(canisterId);
         switch (event.eventType) {
             case (#InstantReputationUpdateEvent(_)) {
                 logger.append([prefix # "sendEvent: case #InstantReputationUpdateEvent, start updateDocHistory"]);
                 let canister : E.InstantReputationUpdateEvent = actor (subscriber_canister_id);
-                logger.append([prefix # "sendEvent: canister created"]);
+                // logger.append([prefix # "sendEvent: canister created"]);
                 let args : E.ReputationChangeRequest = event.reputation_change;
                 let rep_value = Nat.toText(Option.get<Nat>(args.value, 0));
                 logger.append([
