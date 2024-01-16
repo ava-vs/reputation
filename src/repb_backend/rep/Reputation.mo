@@ -3,6 +3,7 @@ import Ledger "canister:ledger";
 import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import Buffer "mo:base/Buffer";
+import Cycles "mo:base/ExperimentalCycles";
 import Hash "mo:base/Hash";
 import Map "mo:base/HashMap";
 import HashMap "mo:base/HashMap";
@@ -83,6 +84,8 @@ actor {
   let default_hub_canister = Principal.fromText("a3qjj-saaaa-aaaal-adgoa-cai");
   let default_minting_account = Principal.fromText("bs3e6-4i343-voosn-wogd7-6kbdg-mctak-hn3ws-k7q7f-fye2e-uqeyh-yae");
 
+  let default_award_fee = 100_000_000;
+
   let emptyBuffer = Buffer.Buffer<(Principal, [DocId])>(0);
   // TODO Stable cache might not be a good idea
   stable var userDocuments : [(Principal, [DocId])] = Buffer.toArray(emptyBuffer);
@@ -95,7 +98,7 @@ actor {
   var tagCifer = TrieMap.TrieMap<Text, Text>(Text.equal, Text.hash);
   var userSharedReputation = Map.HashMap<Principal, Map.HashMap<Category, Nat>>(1, Principal.equal, Principal.hash);
 
-  let ciferSubaccount = Map.HashMap<Text, Subaccount>(1, Text.equal, Text.hash);
+  let ciferSubaccount = Map.HashMap<Text, Types.Subaccount>(1, Text.equal, Text.hash);
 
   let specialistMap = Map.HashMap<Principal, [(Category, Nat)]>(1, Principal.equal, Principal.hash);
 
@@ -152,7 +155,7 @@ actor {
     Utils.convertCiferToDottedFormat(cifer);
   };
 
-  public func getSubaccountByCategory(category : Category) : async ?Subaccount {
+  public func getSubaccountByCategory(category : Category) : async ?Types.Subaccount {
     let cifer = await getCiferByCategory(category);
 
     //TODO check for collisions
@@ -174,7 +177,7 @@ actor {
     };
   };
 
-  func createNewSubaccount(cifer : Text) : Subaccount {
+  func createNewSubaccount(cifer : Text) : Types.Subaccount {
     var bytes = Blob.toArray(Text.encodeUtf8(cifer));
     // Cut to 32 bytes if encoded text is too long
     if (bytes.size() > 32) bytes := Array.subArray<Nat8>(bytes, 0, 32);
@@ -217,12 +220,12 @@ actor {
     // TODO decrease reviewer distributed reputation
 
     let res = await awardToken(to, value);
-    logger.append([prefix # " setUserReputation: awardToken result was received"]);
+    // logger.append([prefix # " setUserReputation: awardToken result was received"]);
     switch (res) {
       case (#Ok(id)) {
         logger.append([prefix # " setUserReputation: awardToken #Ok result was received: " # Nat.toText(id)]);
 
-        logger.append([prefix # " setUserReputation: calling getReputationByBranch"]);
+        // logger.append([prefix # " setUserReputation: calling getReputationByBranch"]);
         let bal = Option.get(await getReputationByCategory(user, category), ("", 0)).1;
         if (bal >= 100) {
           updateSpecialistMap(user, category, bal);
@@ -345,10 +348,13 @@ actor {
     comment : ?Text;
     metadata : ?[(Text, Types.Metadata)];
   }) : async Types.Result<Nat, Text> {
+    let amount = Cycles.available();
+    ignore Cycles.accept(amount);
+
     // Only whitelisted canisters allow
     if (not (await isUserInWhitelist(caller))) return #Err("Unauthorized");
     let prefix = Utils.timestampToDate();
-    logger.append([prefix # " Method eventHandler starts, calling method checkDocument"]);
+    // logger.append([prefix # " Method eventHandler starts, calling method checkDocument"]);
     // If reviewer is absent, then it is a Instant Reputation Change event
     switch (reviewer) {
       case (?r) {
@@ -379,7 +385,7 @@ actor {
 
         switch (result) {
           case (#Ok(docHistory)) {
-            logger.append([prefix # " eventHandler: updateDocHistory result was received"]);
+            // logger.append([prefix # " eventHandler: updateDocHistory result was received"]);
             let user_balance = await getUserBalance(user);
             logger.append([prefix # " eventHandler: new user balance was received: " # Nat.toText(user_balance)]);
             #Ok(user_balance);
@@ -611,6 +617,7 @@ actor {
     logger.append([prefix # " awardToken: with args: " # Principal.toText(acc.owner) # ", amount = " # Nat.toText(amount)]);
     let pre_mint_account = await getMintingAccountPrincipal();
 
+    Cycles.add(default_award_fee);
     let res = await Ledger.icrc2_transfer_from({
       from = { owner = pre_mint_account; subaccount = null };
       to = acc;
@@ -619,8 +626,8 @@ actor {
       memo = memo;
       created_at_time = created_at_time;
     });
-    logger.append([prefix # " Method awardToken: Ledger.icrc2_transfer_from result was received"]);
-    #Ok(0);
+    // logger.append([prefix # " Method awardToken: Ledger.icrc2_transfer_from result was received"]);
+    res;
   };
 
   // func sendToken(
@@ -647,27 +654,28 @@ actor {
   // };
 
   // Decrease reputation
-  // public func burnToken(from :
-  // // Ledger.
-  // Account, amount :
-  // // Ledger.
-  // Tokens) : async Types.Result<TxIndex, Types.TransferFromError> {
-  //   // TODO caller validation
-  //   let sender : ?Ledger.Subaccount = from.subaccount;
-  //   let memo : ?Ledger.Memo = null;
-  //   let fee : ?Ledger.Tokens = ?0;
-  //   let created_at_time : ?Ledger.Timestamp = ?Nat64.fromIntWrap(Time.now());
-  //   let a : Ledger.Tokens = amount;
-  //   let pre_mint_account = await getMintingAccountPrincipal();
-  //   let res = await Ledger.icrc2_transfer_from({
-  //     from = from;
-  //     to = { owner = pre_mint_account; subaccount = null };
-  //     amount = amount;
-  //     fee = fee;
-  //     memo = memo;
-  //     created_at_time = created_at_time;
-  //   });
-  // };
+  public shared ({ caller }) func burnReputation({
+    from : Principal;
+    category : Text;
+    amount : Ledger.Tokens;
+  }) : async Types.Result<TxIndex, Types.TransferFromError> {
+ 
+    let sub : Blob = Option.get(await getSubaccountByCategory(category), Blob.fromArray([]));
+    let sender : ?Ledger.Subaccount = ?Blob.toArray(sub);
+    let memo : ?Ledger.Memo = null;
+    let fee : ?Ledger.Tokens = ?0;
+    let created_at_time : ?Ledger.Timestamp = ?Nat64.fromIntWrap(Time.now());
+    let a : Ledger.Tokens = amount;
+    let pre_mint_account = await getMintingAccountPrincipal();
+    let res = await Ledger.icrc2_transfer_from({
+      from = { owner = from; subaccount = sender };
+      to = { owner = pre_mint_account; subaccount = null };
+      amount = amount;
+      fee = fee;
+      memo = memo;
+      created_at_time = created_at_time;
+    });
+  };
 
   // TODO
   // public func askForBurn(

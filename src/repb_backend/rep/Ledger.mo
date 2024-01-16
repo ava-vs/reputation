@@ -2,6 +2,7 @@ import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import Buffer "mo:base/Buffer";
 import Error "mo:base/Error";
+import Cycles "mo:base/ExperimentalCycles";
 import Int "mo:base/Int";
 import Nat64 "mo:base/Nat64";
 import Nat8 "mo:base/Nat8";
@@ -88,22 +89,28 @@ actor class Ledger(init : { initial_mints : [{ account : { owner : Principal; su
     sum;
   };
 
-   // Computes the balance of all subaccounts.
+  // Computes the balance of all subaccounts.
   func balance_all_subaccounts(account : Account, log : TxLog) : Nat {
     var sum = 0;
     for (tx in log.vals()) {
       switch (tx.operation) {
         case (#Burn(args)) {
-          if (Principal.equal(args.from.owner, account.owner)) { sum -= args.amount };
+          if (Principal.equal(args.from.owner, account.owner)) {
+            sum -= args.amount;
+          };
         };
         case (#Mint(args)) {
-          if (Principal.equal(args.to.owner, account.owner)) { sum += args.amount };
+          if (Principal.equal(args.to.owner, account.owner)) {
+            sum += args.amount;
+          };
         };
         case (#Transfer(args)) {
           if (Principal.equal(args.from.owner, account.owner)) {
             sum -= args.amount + tx.fee;
           };
-          if (Principal.equal(args.to.owner, account.owner)) { sum += args.amount };
+          if (Principal.equal(args.to.owner, account.owner)) {
+            sum += args.amount;
+          };
         };
         case (#Approve(_)) {};
       };
@@ -507,6 +514,9 @@ actor class Ledger(init : { initial_mints : [{ account : { owner : Principal; su
     memo : ?Memo;
     created_at_time : ?Timestamp;
   }) : async Result<TxIndex, TransferFromError> {
+    let cycles_amount = Cycles.available();
+    ignore Cycles.accept(cycles_amount);
+
     let transfer : Transfer = {
       spender = from.owner;
       source = #Icrc2TransferFrom;
@@ -519,7 +529,7 @@ actor class Ledger(init : { initial_mints : [{ account : { owner : Principal; su
     };
 
     // if (caller == from.owner) {
-      return applyTransfer(transfer);
+    return applyTransfer(transfer);
     // };
 
     validateSubaccount(from.subaccount);
