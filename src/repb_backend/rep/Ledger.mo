@@ -516,7 +516,6 @@ actor class Ledger(init : { initial_mints : [{ account : { owner : Principal; su
   }) : async Result<TxIndex, TransferFromError> {
     let cycles_amount = Cycles.available();
     ignore Cycles.accept(cycles_amount);
-
     let transfer : Transfer = {
       spender = from.owner;
       source = #Icrc2TransferFrom;
