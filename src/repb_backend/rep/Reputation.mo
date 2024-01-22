@@ -80,10 +80,11 @@ actor {
   //   return Nat32.fromNat(Nat8.toNat(x * 7));
   // };
 
+  // Cosntants
   let ic_rep_ledger = "ajw6q-6qaaa-aaaal-adgna-cai";
   let default_hub_canister = Principal.fromText("a3qjj-saaaa-aaaal-adgoa-cai");
   let default_minting_account = Principal.fromText("bs3e6-4i343-voosn-wogd7-6kbdg-mctak-hn3ws-k7q7f-fye2e-uqeyh-yae");
-
+  let default_doctoken_deployer_reputation = 100;
   let default_award_fee = 100_000_000;
 
   let emptyBuffer = Buffer.Buffer<(Principal, [DocId])>(0);
@@ -95,7 +96,7 @@ actor {
   var docHistory = Map.HashMap<DocId, [DocHistory]>(10, Nat.equal, Hash.hash);
 
   var userReputation = Map.HashMap<Principal, Map.HashMap<Category, Nat>>(1, Principal.equal, Principal.hash);
-  var tagCifer = TrieMap.TrieMap<Text, Text>(Text.equal, Text.hash);
+  var tagCifer = TrieMap.TrieMap<Text, Text>(Text.equal, Text.hash); // Key - Category, Value - Cifer
   var userSharedReputation = Map.HashMap<Principal, Map.HashMap<Category, Nat>>(1, Principal.equal, Principal.hash);
 
   let ciferSubaccount = Map.HashMap<Text, Types.Subaccount>(1, Text.equal, Text.hash);
@@ -133,6 +134,15 @@ actor {
       case (null) { false }; // User not found
       case (_) { true }; // User found
     };
+  };
+
+  // Init reputation for new Doctoken deployers
+
+  stable var doctokenDeployers : Set<Principal> = Trie.empty<Principal, ()>();
+
+  public func initDoctokenDeployerReputation(userId : Principal, subaccount : ?Types.Subaccount) : async () {
+    let res = await awardToken({ owner = userId; subaccount = subaccount }, default_doctoken_deployer_reputation);
+    doctokenDeployers := Trie.put(doctokenDeployers, _keyFromPrincipal(userId), Principal.equal, ()).0;
   };
 
   public query func getCiferByCategory(tag : Text) : async ?Text {
@@ -280,10 +290,10 @@ actor {
     Iter.toArray(specialistMap.entries());
   };
 
-  public query func getSpecialistCategories(user : Principal) : async (Principal, [(Category, Nat)]) {
+  public query func getSpecialistCategories(user : Principal) : async [(Category, Nat)] {
     let result = switch (specialistMap.get(user)) {
-      case null (user, []);
-      case (?array)(user, array);
+      case null [];
+      case (?array) array;
     };
   };
 
@@ -291,10 +301,10 @@ actor {
     Iter.toArray(expertMap.entries());
   };
 
-  public query func getExpertCategories(user : Principal) : async (Principal, [(Category, Nat)]) {
+  public query func getExpertCategories(user : Principal) : async [(Category, Nat)] {
     let result = switch (expertMap.get(user)) {
-      case null (user, []);
-      case (?array)(user, array);
+      case null [];
+      case (?array) array;
     };
   };
 
@@ -354,11 +364,10 @@ actor {
     // Only whitelisted canisters allow
     if (not (await isUserInWhitelist(caller))) return #Err("Unauthorized");
     let prefix = Utils.timestampToDate();
-    // logger.append([prefix # " Method eventHandler starts, calling method checkDocument"]);
-    // If reviewer is absent, then it is a Instant Reputation Change event
+    // If reviewer present, then it is a Instant Reputation Change event
     switch (reviewer) {
       case (?r) {
-        // TODO Add all checks here - doc, category-tag, reputation, etc
+        // document check
         let doc = switch (await checkDocument(source.0, source.1)) {
           case (#Err(err)) {
             logger.append([prefix # " eventHandler: document check failed"]);
@@ -369,12 +378,24 @@ actor {
             doc;
           };
         };
-        // TODO check reviewer reputation
         let final_comment = switch (comment) {
           case (?c) c;
           case null "";
         };
         let final_value : Nat8 = Nat8.fromNat(Option.get<Nat>(value, 0));
+
+        // TODO Category check
+        var sub : ?Subaccount = await getSubaccountByCategory(category);
+        if (sub == null) sub := await getSubaccountByCategory(doc.categories[0]);
+        // Reviewer's reputation check
+        let reviewer_reputation = Trie.get(doctokenDeployers, _keyFromPrincipal(r), Principal.equal);
+        switch (reviewer_reputation) {
+          case (null) {
+            // doctoken deployer reputation not initialized, initialize it
+            await initDoctokenDeployerReputation(r, sub);
+          };
+          case (?rep) {};
+        };
         let result = await updateDocHistory({
           reviewer = r;
           user = user;
@@ -385,7 +406,6 @@ actor {
 
         switch (result) {
           case (#Ok(docHistory)) {
-            // logger.append([prefix # " eventHandler: updateDocHistory result was received"]);
             let user_balance = await getUserBalance(user);
             logger.append([prefix # " eventHandler: new user balance was received: " # Nat.toText(user_balance)]);
             #Ok(user_balance);
@@ -424,10 +444,10 @@ actor {
     docHistory.put(doc.tokenId, Array.append(Option.get(docHistory.get(doc.tokenId), []), [newDocHistory]));
     logger.append([prefix # " updateDocHistory: checking tags"]);
 
-    let branch = doc.categories[0];
-    logger.append([prefix # " updateDocHistory: branch found by tag " # doc.categories[0] # " is " # branch # " for user " # Principal.toText(user) # " with value " # Nat8.toText(value) # " and comment " # comment]);
+    let category = doc.categories[0];
+    logger.append([prefix # " updateDocHistory: branch found by tag " # doc.categories[0] # " is " # category # " for user " # Principal.toText(user) # " with value " # Nat8.toText(value) # " and comment " # comment]);
 
-    let res = await setUserReputation(reviewer, user, branch, Nat8.toNat(value));
+    let res = await setUserReputation(reviewer, user, category, Nat8.toNat(value));
     switch (res) {
       case (#Ok(account, value)) {
         logger.append([prefix # " updateDocHistory: setUserReputation result: account= " # Principal.toText(account.owner) # ", subaccount= " # Nat.toText(value)]);
@@ -455,8 +475,6 @@ actor {
 
   // Check document by canister id and docId
   func checkDocument(canisterId : Text, docId : DocId) : async Types.Result<Document, Types.CommonError> {
-    // TODO call canister and get document
-
     let check = await getAndCheckDocument(canisterId, docId);
     let doc = switch (check) {
       case null {
@@ -487,16 +505,13 @@ actor {
     let current_cifer = await getCiferByCategory(category);
     switch (current_cifer) {
       case null {
-        // TODO Create a hierarchical system of industries
         if (Text.equal(cifer, "")) {
-          let default_cifer = "1.7.1.1";
-          tagCifer.put(category, default_cifer);
-          return #Ok((category, default_cifer));
+          return #Err(#WrongCipher { cifer = cifer });
         };
         tagCifer.put(category, cifer);
         #Ok(category, cifer);
       };
-      case (?t) #Err(#CategoryAlreadyExists { category; cifer = t });
+      case (?t) #Err(#CategoryAlreadyExists { category = category; cifer = t });
     };
   };
 
@@ -560,6 +575,49 @@ actor {
       case null Principal.fromText("aaaaa-aa");
       case (?account) account.owner;
     };
+  };
+
+  type Badge = {
+    user : Text;
+    ava_link : Text;
+    ic_link : Text;
+    total_reputation : Nat;
+    specialist : [(Text, Text)]; // (cipher, name)
+    expert : [(Text, Text)]; // (cipher, name)
+    history_link : Text;
+  };
+
+  // Method for dNFT
+  public func getSoulboundBadge(user : Principal) : async Badge {
+    let badge = {
+      user = Principal.toText(user);
+      ava_link = "https://ava.capetown/en";
+      ic_link = "https://internetcomputer.org";
+      total_reputation = await getUserBalance(user);
+      specialist = await getSpecialistCiferAndCategories(user);
+      expert = await getExpertgetCiferAndCategories(user);
+      history_link = "https://ava.capetown/en" # "/user/" # Principal.toText(user) # "/history";
+    };
+  };
+
+  func getSpecialistCiferAndCategories(user : Principal) : async [(Text, Text)] {
+    let specialist = await getSpecialistCategories(user);
+    let res = Buffer.Buffer<(Text, Text)>(1);
+    for (s in specialist.vals()) {
+      let cifer = Option.get(await getCiferByCategory(s.0), "");
+      res.add(cifer, s.0);
+    };
+    Buffer.toArray(res);
+  };
+
+  func getExpertgetCiferAndCategories(user : Principal) : async [(Text, Text)] {
+    let expert = await getExpertCategories(user);
+    let res = Buffer.Buffer<(Text, Text)>(1);
+    for (e in expert.vals()) {
+      let cifer = Option.get(await getCiferByCategory(e.0), "");
+      res.add(cifer, e.0);
+    };
+    Buffer.toArray(res);
   };
 
   public func getUserBalance(user : Principal) : async Nat {
@@ -659,7 +717,7 @@ actor {
     category : Text;
     amount : Ledger.Tokens;
   }) : async Types.Result<TxIndex, Types.TransferFromError> {
- 
+
     let sub : Blob = Option.get(await getSubaccountByCategory(category), Blob.fromArray([]));
     let sender : ?Ledger.Subaccount = ?Blob.toArray(sub);
     let memo : ?Ledger.Memo = null;
