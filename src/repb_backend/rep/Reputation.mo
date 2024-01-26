@@ -101,9 +101,9 @@ actor {
 
   let ciferSubaccount = Map.HashMap<Text, Types.Subaccount>(1, Text.equal, Text.hash);
 
-  let specialistMap = Map.HashMap<Principal, [(Category, Nat)]>(1, Principal.equal, Principal.hash);
+  let specialistMap = Map.HashMap<Principal, [(Category, Nat)]>(1, Principal.equal, Principal.hash); // Key: user, value: [(Category, Balance)]
 
-  let expertMap = Map.HashMap<Principal, [(Category, Nat)]>(1, Principal.equal, Principal.hash);
+  let expertMap = Map.HashMap<Principal, [(Category, Nat)]>(1, Principal.equal, Principal.hash); // Key: user, value: [(Category, Balance)]
 
   // Whitelist
   private func _keyFromPrincipal(p : Principal) : Key<Principal> {
@@ -286,6 +286,29 @@ actor {
     };
   };
 
+  public query func getBeginnerCategories(user : Principal) : async [(Category, Nat)] {
+    let categories = userReputation.get(user);
+    let allCategories = switch (categories) {
+      case null [];
+      case (?array) array;
+    };
+    // remove specialist and expert categories
+    let specialistCategories = getSpecialistCategories(user);
+    let expertCategories = getExpertCategories(user);
+    func contains<T>(arr : [T], element : T) : Bool {
+      Array.any<T>(arr, func(x : T) : Bool { x == element });
+    };
+
+    let beginnerCategories = Array.filter<(Category, Nat)>(
+      allCategories,
+      func(c : (Category, Nat)) : Bool {
+        not (contains(specialistCategories, c.0)) and not (contains(expertCategories, c.0))
+      },
+    );
+
+    return beginnerCategories;
+  };
+
   public query func getSpecialists() : async [(Principal, [(Category, Nat)])] {
     Iter.toArray(specialistMap.entries());
   };
@@ -384,7 +407,7 @@ actor {
         };
         let final_value : Nat8 = Nat8.fromNat(Option.get<Nat>(value, 0));
 
-        // TODO Category check
+        // TODO Set Init reputation Category to "Motoko" for doctoken deployer
         var sub : ?Subaccount = await getSubaccountByCategory(category);
         if (sub == null) sub := await getSubaccountByCategory(doc.categories[0]);
         // Reviewer's reputation check
@@ -582,6 +605,7 @@ actor {
     ava_link : Text;
     ic_link : Text;
     total_reputation : Nat;
+    beginner : [(Text, Text)]; // (cipher, name)
     specialist : [(Text, Text)]; // (cipher, name)
     expert : [(Text, Text)]; // (cipher, name)
     history_link : Text;
@@ -594,10 +618,21 @@ actor {
       ava_link = "https://ava.capetown/en";
       ic_link = "https://internetcomputer.org";
       total_reputation = await getUserBalance(user);
+      beginner = await getBeginnerCiferAndCategories(user);
       specialist = await getSpecialistCiferAndCategories(user);
       expert = await getExpertgetCiferAndCategories(user);
-      history_link = "https://ava.capetown/en" # "/user/" # Principal.toText(user) # "/history";
+      history_link = "https://check.ava.capetown";
     };
+  };
+
+  func getBeginnerCiferAndCategories(user : Principal) : async [(Text, Text)] {
+    let beginner = await getBeginnerCategories(user);
+    let res = Buffer.Buffer<(Text, Text)>(1);
+    for (s in beginner.vals()) {
+      let cifer = Option.get(await getCiferByCategory(s.0), "");
+      res.add(cifer, s.0);
+    };
+    Buffer.toArray(res);
   };
 
   func getSpecialistCiferAndCategories(user : Principal) : async [(Text, Text)] {
