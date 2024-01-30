@@ -87,6 +87,7 @@ actor {
   let default_doctoken_deployer_reputation = 100;
   let default_award_fee = 100_000_000;
 
+
   let emptyBuffer = Buffer.Buffer<(Principal, [DocId])>(0);
   // TODO Stable cache might not be a good idea
   stable var userDocuments : [(Principal, [DocId])] = Buffer.toArray(emptyBuffer);
