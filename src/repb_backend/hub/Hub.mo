@@ -50,6 +50,8 @@ actor class Hub() = Self {
 
     let default_reputation_fee = 550_000_000;
 
+    let default_subscription_fee = 500_000_000_000;
+
     // subscriber : <canisterId , filter>
 
     var eventHub = {
@@ -79,6 +81,9 @@ actor class Hub() = Self {
 
     public shared func subscribe(subscriber : Subscriber) : async Bool {
         let amount = Cycles.available();
+        if (amount < default_subscription_fee) {
+            return false;
+        };
         ignore Cycles.accept(amount);
 
         eventHub.subscribers.put(subscriber.callback, subscriber);
@@ -92,7 +97,8 @@ actor class Hub() = Self {
     public shared ({ caller }) func emitEvent(event : E.Event) : async Types.Result<[(Nat, Nat)], Text> {
         let amount = Cycles.available();
 
-        if (amount < default_reputation_fee * 1_000 + 300_000_000_000) {
+        if (amount < default_reputation_fee * 1_000 + 200_000_000_000) {
+
             return #Err("Not enough cycles to emit event");
         };
         ignore Cycles.accept(amount);

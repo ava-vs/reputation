@@ -156,5 +156,6 @@ module {
   public type CategoryError = CommonError or {
     #CategoryAlreadyExists : { category : Category; cifer : Text };
     #CategoryDoesNotExist : { category : Category };
+    #WrongCipher : { cifer : Text };
   };
 };
