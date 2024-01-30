@@ -221,19 +221,18 @@ actor {
 
   // set reputation value for a given user in a specific branch
   func setUserReputation(reviewer : Principal, user : Principal, category : Text, value : Nat) : async Types.Result<(Types.Account, Nat), Types.TransferBurnError> {
-    logger.append([prefix # " setUserReputation starts, calling method getSubaccountByCategory"]);
+    // logger.append([prefix # " setUserReputation starts, calling method getSubaccountByCategory"]);
     let sub : ?Subaccount = await getSubaccountByCategory(category);
     if (sub == null) return #Err(#NotFound { message = "Cannot find out the category " # category; docId = 0 });
-    logger.append([prefix # " setUserReputation: calling method awardToken"]);
+    // logger.append([prefix # " setUserReputation: calling method awardToken"]);
     let to : Types.Account = { owner = user; subaccount = sub };
 
     // TODO decrease reviewer distributed reputation
 
     let res = await awardToken(to, value);
-    // logger.append([prefix # " setUserReputation: awardToken result was received"]);
     switch (res) {
       case (#Ok(id)) {
-        logger.append([prefix # " setUserReputation: awardToken #Ok result was received: " # Nat.toText(id)]);
+        // logger.append([prefix # " setUserReputation: awardToken #Ok result was received: " # Nat.toText(id)]);
 
         // logger.append([prefix # " setUserReputation: calling getReputationByBranch"]);
         let bal = Option.get(await getReputationByCategory(user, category), ("", 0)).1;
@@ -286,27 +285,30 @@ actor {
     };
   };
 
-  public query func getBeginnerCategories(user : Principal) : async [(Category, Nat)] {
+  public func getBeginnerCategories(user : Principal) : async [(Category, Nat)] {
     let categories = userReputation.get(user);
-    let allCategories = switch (categories) {
-      case null [];
-      case (?array) array;
-    };
-    // remove specialist and expert categories
-    let specialistCategories = getSpecialistCategories(user);
-    let expertCategories = getExpertCategories(user);
-    func contains<T>(arr : [T], element : T) : Bool {
-      Array.any<T>(arr, func(x : T) : Bool { x == element });
-    };
 
-    let beginnerCategories = Array.filter<(Category, Nat)>(
-      allCategories,
-      func(c : (Category, Nat)) : Bool {
-        not (contains(specialistCategories, c.0)) and not (contains(expertCategories, c.0))
-      },
-    );
-
-    return beginnerCategories;
+    let resMap = switch (categories) {
+      case (null) {
+        Map.HashMap<Category, Nat>(0, Text.equal, Text.hash);
+      };
+      case (?categoriesMap) {
+        // remove specialist and expert categories
+        Map.mapFilter<Category, Nat, Nat>(
+          categoriesMap,
+          Text.equal,
+          Text.hash,
+          func(category : Category, value : Nat) : ?Nat {
+            if (value >= 100) {
+              null // remove category
+            } else {
+              ?value // Hold category
+            };
+          },
+        );
+      };
+    };
+    return Iter.toArray(resMap.entries());
   };
 
   public query func getSpecialists() : async [(Principal, [(Category, Nat)])] {
@@ -419,6 +421,10 @@ actor {
           };
           case (?rep) {};
         };
+        let userReputation = await getUserReputation(user);
+        let reviewerReputation = await getUserReputation(r);
+        if (userReputation >= reviewerReputation) return #Err("Insufficient Reputation, balance = " # Nat.toText(reviewerReputation) # ", user reputation = " # Nat.toText(userReputation));
+
         let result = await updateDocHistory({
           reviewer = r;
           user = user;
@@ -465,10 +471,10 @@ actor {
     };
 
     docHistory.put(doc.tokenId, Array.append(Option.get(docHistory.get(doc.tokenId), []), [newDocHistory]));
-    logger.append([prefix # " updateDocHistory: checking tags"]);
+    // logger.append([prefix # " updateDocHistory: checking tags"]);
 
     let category = doc.categories[0];
-    logger.append([prefix # " updateDocHistory: branch found by tag " # doc.categories[0] # " is " # category # " for user " # Principal.toText(user) # " with value " # Nat8.toText(value) # " and comment " # comment]);
+    // logger.append([prefix # " updateDocHistory: branch found by tag " # doc.categories[0] # " is " # category # " for user " # Principal.toText(user) # " with value " # Nat8.toText(value) # " and comment " # comment]);
 
     let res = await setUserReputation(reviewer, user, category, Nat8.toNat(value));
     switch (res) {
@@ -531,11 +537,29 @@ actor {
         if (Text.equal(cifer, "")) {
           return #Err(#WrongCipher { cifer = cifer });
         };
-        tagCifer.put(category, cifer);
-        #Ok(category, cifer);
+        switch (tagCifer.get(category)) {
+          case (null) {
+            tagCifer.put(category, cifer);
+          };
+          case (?t) ignore tagCifer.replace(category, cifer);
+        };
+        return #Ok(category, cifer);
       };
       case (?t) #Err(#CategoryAlreadyExists { category = category; cifer = t });
     };
+  };
+
+  public func removeCategory(category : Category) : async Types.Result<Category, Types.CategoryError> {
+    let current_cifer = await getCiferByCategory(category);
+    switch (current_cifer) {
+      case null {
+        return #Err(#CategoryDoesNotExist { category = category });
+      };
+      case (?c) {
+        ignore tagCifer.remove(category);
+      };
+    };
+    #Ok(category);
   };
 
   public shared query func getCategories() : async [(Category, Text)] {
