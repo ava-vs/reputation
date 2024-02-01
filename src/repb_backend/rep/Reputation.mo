@@ -83,7 +83,7 @@ actor {
   // Cosntants
   let ic_rep_ledger = "ajw6q-6qaaa-aaaal-adgna-cai";
   let default_hub_canister = Principal.fromText("a3qjj-saaaa-aaaal-adgoa-cai");
-  let default_minting_account = Principal.fromText("bs3e6-4i343-voosn-wogd7-6kbdg-mctak-hn3ws-k7q7f-fye2e-uqeyh-yae");
+  let default_minting_account = Principal.fromText("oa7ab-4elxo-r5ooc-a23ga-lheml-we4wg-z5iuo-ery2n-57uyv-u234p-pae");
   let default_doctoken_deployer_reputation = 100;
   let default_award_fee = 100_000_000;
 
@@ -269,6 +269,7 @@ actor {
       case (?spec) {
         let updatedCategory = Utils.pushIntoArray<(Category, Nat)>((category, bal), spec);
         specialistMap.put(user, updatedCategory);
+        logger.append([prefix # " updateSpecialistMap: user " # Principal.toText(user) # " was added to specialistMap"]);
       };
     };
   };
@@ -398,9 +399,9 @@ actor {
             logger.append([prefix # " eventHandler: document check failed"]);
             return #Err("Error: document check failed");
           };
-          case (#Ok(doc)) {
-            logger.append([prefix # " eventHandler: document ok"]);
-            doc;
+          case (#Ok(document)) {
+            logger.append([prefix # " eventHandler: document №" # Nat.toText(document.tokenId) # "ok"]);
+            document;
           };
         };
         let final_comment = switch (comment) {
@@ -421,9 +422,9 @@ actor {
           };
           case (?rep) {};
         };
-        let userReputation = await getUserReputation(user);
-        let reviewerReputation = await getUserReputation(r);
-        if (userReputation >= reviewerReputation) return #Err("Insufficient Reputation, balance = " # Nat.toText(reviewerReputation) # ", user reputation = " # Nat.toText(userReputation));
+        // let userReputation = await getUserReputation(user);
+        // let reviewerReputation = await getUserReputation(r);
+        // if (userReputation >= reviewerReputation) return #Err("Insufficient Reputation, balance = " # Nat.toText(reviewerReputation) # ", user reputation = " # Nat.toText(userReputation));
 
         let result = await updateDocHistory({
           reviewer = r;
