@@ -39,11 +39,18 @@ module {
         # Int.toText(minutesInHour) # ":" # Int.toText(secondsInMinute);
     };
 
-    public func pushIntoArray<X>(elem : X, array : [X]) : [X] {
-        let buffer = Buffer.fromArray<X>(array);
-        buffer.add(elem);
-        return Buffer.toArray(buffer);
-    };
+	public func pushIntoArray<X>(elem : X, array : [X]) : [X] {
+		let buffer = Buffer.fromArray<X>(array);
+		buffer.add(elem);
+		return Buffer.toArray(buffer);
+	};
+
+	public func appendArray<X>(array1 : [X], array2 : [X]) : [X] {
+		let buffer1 = Buffer.fromArray<X>(array1);
+		let buffer2 = Buffer.fromArray<X>(array2);
+		buffer1.append(buffer2);
+		Buffer.toArray(buffer1);
+	};
 
     // For <SFFNNNGGG> cifer
     public func convertCiferToDottedFormat(cifer : Text) : Text {

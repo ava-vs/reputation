@@ -18,6 +18,7 @@ import Types "./Types";
 import List "utils/List";
 import Logger "utils/Logger";
 import Utils "utils/Utils";
+import Canister "utils/matcher/Canister";
 
 actor class Hub() = Self {
     type EventField = E.EventField;
@@ -34,6 +35,10 @@ actor class Hub() = Self {
 
     type EventName = E.EventName;
 
+    type CanisterId = Text;
+
+    type DocId = Nat;
+
     // Logger
 
     stable var state : Logger.State<Text> = Logger.new<Text>(0, null);
@@ -47,6 +52,7 @@ actor class Hub() = Self {
     let default_principal : Principal = Principal.fromText("aaaaa-aa");
     let rep_canister_id = "aoxye-tiaaa-aaaal-adgnq-cai";
     let default_doctoken_canister_id = "h5x3q-hyaaa-aaaal-adg6q-cai";
+    let default_receiver_canister_id = default_doctoken_canister_id;
     let default_reputation_fee = 550_000_000;
     let default_subscription_fee = 500_000_000_000;
     // subscriber : <canisterId , filter>
@@ -55,6 +61,7 @@ actor class Hub() = Self {
         var events : [E.Event] = [];
         subscribers : HashMap.HashMap<Principal, Subscriber> = HashMap.HashMap<Principal, Subscriber>(10, Principal.equal, Principal.hash);
     };
+    let userCanisterDocMap = HashMap.HashMap<Principal, [(CanisterId, DocId)]>(10, Principal.equal, Principal.hash);
 
     public func viewLogs(end : Nat) : async [Text] {
         let view = logger.view(0, end);
@@ -81,7 +88,7 @@ actor class Hub() = Self {
         if (amount < default_subscription_fee) {
             return false;
         };
-        ignore Cycles.accept(amount);
+        ignore Cycles.accept(default_subscription_fee);
         eventHub.subscribers.put(subscriber.callback, subscriber);
         true;
     };
@@ -99,7 +106,7 @@ actor class Hub() = Self {
 
         // logger.append([prefix # "Starting method emitEvent"]);
         eventHub.events := Utils.pushIntoArray(event, eventHub.events);
-
+        updateUserCanisterDocMap(event);
         let buffer = Buffer.Buffer<(Nat, Nat)>(0);
         for (subscriber in eventHub.subscribers.vals()) {
             // logger.append([prefix # "emitEvent: check subscriber " # Principal.toText(subscriber.callback) # " with filter " # subscriber.filter.fieldFilters[0].name]);
@@ -118,6 +125,28 @@ actor class Hub() = Self {
         };
 
         return #Ok(Buffer.toArray<(Nat, Nat)>(buffer));
+    };
+
+    public func getUserDocuments(principal : Principal) : async [(CanisterId, DocId)] {
+        switch (userCanisterDocMap.get(principal)) {
+            case (?array) {
+                return array;
+            };
+            case null { [] };
+        };
+    };
+
+    func updateUserCanisterDocMap(event : E.Event) {
+        let existing = userCanisterDocMap.get(event.reputation_change.user);
+        switch (existing) {
+            case (?array) {
+                var newArray = Utils.pushIntoArray(event.reputation_change.source, array);
+                userCanisterDocMap.put(event.reputation_change.user, newArray);
+            };
+            case null {
+                userCanisterDocMap.put(event.reputation_change.user, [event.reputation_change.source]);
+            };
+        };
     };
 
     func eventNameToText(eventName : EventName) : Text {
@@ -266,11 +295,14 @@ actor class Hub() = Self {
 
     stable var eventState : [E.Event] = [];
     stable var eventSubscribers : [Subscriber] = [];
+    stable var userCanisterDoc : [(Principal, [(CanisterId, Nat)])] = [];
 
     system func preupgrade() {
         eventState := eventHub.events;
         eventSubscribers := Iter.toArray(eventHub.subscribers.vals());
+        userCanisterDoc := Iter.toArray(userCanisterDocMap.entries());
     };
+
     system func postupgrade() {
         eventHub.events := eventState;
         eventState := [];
@@ -278,5 +310,9 @@ actor class Hub() = Self {
             eventHub.subscribers.put(subscriber.callback, subscriber);
         };
         eventSubscribers := [];
+        for (user in userCanisterDoc.vals()) {
+            userCanisterDocMap.put(user.0, user.1);
+        };
+        userCanisterDoc := [];
     };
 };
