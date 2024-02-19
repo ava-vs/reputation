@@ -676,18 +676,29 @@ actor {
     Buffer.toArray(res);
   };
 
-  public func getUserBalance(user : Principal) : async Nat {
+  public func getUserBalance(userAlias : Principal) : async Nat {
+    let user = _aliasHandler(userAlias);
     await Ledger.icrc1_balance_by_principal({ owner = user; subaccount = null });
   };
 
-  public func userBalanceByCategory(user : Principal, category : Text) : async Nat {
+  // Check aliases and Replace to real user principal
+  func _aliasHandler(user : Principal) : Principal {
+    let existingAliasValue = aliases.get(Principal.toText(user));
+    switch (existingAliasValue) {
+      case (?value) Principal.fromText(value);
+      case (null) user;
+    };
+  };
+
+  public func userBalanceByCategory(userAlias : Principal, category : Text) : async Nat {
     let sub : ?Blob = await getSubaccountByCategory(category);
     let ledger_subaccount : Ledger.Subaccount = switch (sub) {
       case (null) { [] };
       case (?s) { Blob.toArray(s) };
     };
+    let registerUser = _aliasHandler(userAlias);
     let addSub : Ledger.Account = {
-      owner = user;
+      owner = registerUser;
       subaccount = ?ledger_subaccount;
     };
     await Ledger.icrc1_balance_of(addSub);
@@ -722,9 +733,9 @@ actor {
       case (null) { [] };
       case (?s) { Blob.toArray(s) };
     };
-
+    let registerUser = _aliasHandler(to.owner);
     let acc : Ledger.Account = {
-      owner = to.owner;
+      owner = registerUser;
       subaccount = ?ledger_subaccount;
     };
     logger.append([prefix # " Method awardToken: calling method Ledger.icrc2_transfer_from \n"]);
@@ -758,8 +769,9 @@ actor {
     let created_at_time : ?Ledger.Timestamp = ?Nat64.fromIntWrap(Time.now());
     let a : Ledger.Tokens = amount;
     let pre_mint_account = await getMintingAccountPrincipal();
+    let registerUser = _aliasHandler(from);
     let res = await Ledger.icrc2_transfer_from({
-      from = { owner = from; subaccount = sender };
+      from = { owner = registerUser; subaccount = sender };
       to = { owner = pre_mint_account; subaccount = null };
       amount = amount;
       fee = fee;
@@ -824,10 +836,50 @@ actor {
   // };
   // };
 
+  // Aliases
+
+  // Alias to use as key is the text identifier from Internet Identity.
+  // Value is the user's text identifier from the check.ava.capetown website.
+  var aliases : HashMap.HashMap<Text, Text> = HashMap.HashMap<Text, Text>(0, Text.equal, Text.hash);
+
+  public shared ({ caller }) func addAlias(alias : Text) : async Text {
+    let textCaller = Principal.toText(caller);
+    // Only existing users can add an alias to themselves
+    if (aliases.get(textCaller) == null) {
+      return textCaller;
+    };
+    aliases.put(alias, textCaller);
+    "No such alias";
+  };
+
+  public func getAlias(user : Text) : async Result<Text, Bool> {
+    switch (aliases.get(user)) {
+      case (?alias) {
+        return #ok(alias);
+      };
+      case (_) {
+        return #err(false);
+      };
+    };
+  };
+
+  public func removeAlias(user : Text) : async Bool {
+    switch (aliases.remove(user)) {
+      case (?_) {
+        return true;
+      };
+      case (_) {
+        return false;
+      };
+    };
+  };
+
   // Stable tags, docHistory and user reputation storage
   stable var tagEntries : [(Category, Text)] = [];
   stable var userReputationArray : [(Principal, [(Category, Nat)])] = [];
   stable var docHistoryArray : [(DocId, [DocHistory])] = [];
+  stable var stableAsias : [(Text, Text)] = [];
+
   system func preupgrade() {
     for ((tag, branch) in tagCifer.entries()) {
       tagEntries := Array.append(tagEntries, [(tag, branch)]);
@@ -846,6 +898,7 @@ actor {
       };
       docHistoryArray := Array.append(docHistoryArray, [(docId, Buffer.toArray(buffer))]);
     };
+    stableAsias := Iter.toArray(aliases.entries());
   };
 
   system func postupgrade() {
@@ -865,6 +918,10 @@ actor {
       docHistory.put(docId, entry);
     };
     docHistoryArray := [];
+    for ((user, alias) in stableAsias.vals()) {
+      aliases.put(user, alias);
+    };
+    stableAsias := [];
   };
 
   // Clearance methods
