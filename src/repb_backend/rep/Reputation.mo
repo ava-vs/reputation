@@ -76,9 +76,6 @@ actor {
   stable var state : Logger.State<Text> = Logger.new<Text>(0, null);
   let logger = Logger.Logger<Text>(state);
   var prefix = Utils.timestampToDate();
-  // let hashBranch = func(x : Branch) : Nat32 {
-  //   return Nat32.fromNat(Nat8.toNat(x * 7));
-  // };
 
   // Cosntants
   let ic_rep_ledger = "ajw6q-6qaaa-aaaal-adgna-cai";
@@ -88,9 +85,6 @@ actor {
   let default_award_fee = 100_000_000;
 
   let emptyBuffer = Buffer.Buffer<(Principal, [DocId])>(0);
-  // TODO Stable cache might not be a good idea
-  stable var userDocuments : [(Principal, [DocId])] = Buffer.toArray(emptyBuffer);
-  var userDocumentMap = Map.HashMap<Principal, [DocId]>(10, Principal.equal, Principal.hash);
 
   // map docId - docHistory
   var docHistory = Map.HashMap<DocId, [DocHistory]>(10, Nat.equal, Hash.hash);
@@ -105,11 +99,11 @@ actor {
 
   let expertMap = Map.HashMap<Principal, [(Category, Nat)]>(1, Principal.equal, Principal.hash); // Key: user, value: [(Category, Balance)]
 
-  // Whitelist
   private func _keyFromPrincipal(p : Principal) : Key<Principal> {
     { hash = Principal.hash(p); key = p };
   };
 
+  // Whitelist (Allowlist)
   private func initWhitelist() : Set<Principal> {
     let emptyTrie = Trie.empty<Principal, ()>();
     let trieWithFirstKey = Trie.put(emptyTrie, _keyFromPrincipal(default_hub_canister), Principal.equal, ()).0;
@@ -422,6 +416,8 @@ actor {
           };
           case (?rep) {};
         };
+
+        // TODO Reputation balance check
         // let userReputation = await getUserReputation(user);
         // let reviewerReputation = await getUserReputation(r);
         // if (userReputation >= reviewerReputation) return #Err("Insufficient Reputation, balance = " # Nat.toText(reviewerReputation) # ", user reputation = " # Nat.toText(userReputation));
@@ -748,29 +744,6 @@ actor {
     res;
   };
 
-  // func sendToken(
-  //   from : Ledger.Account,
-  //   to : Ledger.Account,
-  //   amount : Ledger.Tokens,
-  // ) : async Types.Result<TxIndex, Types.TransferFromError> {
-  //   let sender : ?Ledger.Subaccount = from.subaccount;
-  //   let memo : ?Ledger.Memo = null;
-  //   let fee : ?Ledger.Tokens = null;
-  //   let created_at_time : ?Ledger.Timestamp = ?Nat64.fromIntWrap(Time.now());
-  //   let a : Ledger.Tokens = amount;
-  //   let acc : Ledger.Account = to;
-  //   let res = await Ledger.icrc2_transfer_from({
-  //     from = from;
-  //     to = to;
-  //     amount = amount;
-  //     fee = fee;
-  //     memo = memo;
-  //     created_at_time = created_at_time;
-  //   });
-  //   ignore await awardIncenitive(from, 1);
-  //   res;
-  // };
-
   // Decrease reputation
   public shared ({ caller }) func burnReputation({
     from : Principal;
@@ -847,7 +820,7 @@ actor {
 
   // Scheduler part
   // public func distributeTokens(user: Principal, branch : Nat8, value : Nat) : async Result<Bool, TransferFromError> {
-  //   sendToken
+  //   TODO handle quantity of tokens for distribution daily
   // };
   // };
 
@@ -920,43 +893,3 @@ actor {
     true;
   };
 };
-
-/*
-
-    Test updateDocHistory
-
-   public func test2UpdateDocHistory() : async Types.Result<DocHistory, Types.CommonError> {
-    let user = Principal.fromText("aaaaa-aa");
-    let docId = 1;
-    let value : Nat8 = 1;
-    let comment = "Test comment";
-
-    let expectedResult : Types.Result<DocHistory, Types.CommonError> = #Ok({
-      docId = docId;
-      timestamp = Time.now();
-      changedBy = user;
-      value = value;
-      comment = comment;
-    });
-    let result = await updateDocHistory({
-      user = user;
-      docId = docId;
-      value = value;
-      comment = comment;
-    });
-
-    switch (result) {
-      case (#Ok(docHistory)) {
-        if (docHistory.docId == docId) {
-          return expectedResult; //"updateDocHistory test passed";
-        } else {
-          return #Err(#TemporarilyUnavailable); //"updateDocHistory test failed";
-        };
-      };
-      case (#Err(err)) {
-        return #Err(#TemporarilyUnavailable);
-      };
-    };
-  };
-
-*/
