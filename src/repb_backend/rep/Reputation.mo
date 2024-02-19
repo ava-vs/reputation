@@ -852,13 +852,13 @@ actor {
     "No such alias";
   };
 
-  public func getAlias(user : Text) : async Result<Text, Bool> {
+  public func getAlias(user : Text) : async Types.Result<Text, Bool> {
     switch (aliases.get(user)) {
       case (?alias) {
-        return #ok(alias);
+        return #Ok(alias);
       };
       case (_) {
-        return #err(false);
+        return #Err(false);
       };
     };
   };
