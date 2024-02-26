@@ -339,6 +339,58 @@ actor {
     (category, value);
   };
 
+  // Increase reputation to another participant
+  public shared ({ caller }) func increaseReputation({
+    user : Principal;
+    source : (Text, Nat); // (doctoken_canisterId, documentId)
+    raised_category : Text;
+    value : Nat8;
+    comment : Text;
+  }) : async Types.Result<DocHistory, Types.CommonError> {
+    // check document
+    let doc : Document = switch (await checkDocument(source.0, source.1)) {
+      case (#Err(err)) {
+        logger.append([prefix # " increaseReputation: document check failed"]);
+        return #Err(err);
+      };
+      case (#Ok(document)) {
+        logger.append([prefix # " increaseReputation: document №" # Nat.toText(document.tokenId) # "ok"]);
+        document;
+      };
+    };
+    // check category
+    if (
+      not Option.isSome(
+        Array.find(
+          doc.categories,
+          func(item : Text) : Bool {
+            return item == raised_category;
+          },
+        )
+      )
+    ) {
+      return #Err(#NotFound { message = "Category " # raised_category # " not found in document"; docId = source.1 });
+    };
+    // check for the balance of the caller
+    let reviwer_balance = await getUserBalance(caller);
+    if (reviwer_balance <= 100) return #Err(#InsufficientFunds { balance = reviwer_balance });
+
+    // check for the balance of the user
+    let user_balance = await getUserBalance(user);
+
+    // only if user balance is less than reviewer balance allow to increase reputation
+    if (reviwer_balance <= user_balance) return #Err(#InsufficientFunds { balance = reviwer_balance });
+    // TODO check day limit for reputation increase by one user
+    let result = await updateDocHistory({
+      reviewer = caller;
+      user = user;
+      doc = doc;
+      value = value;
+      comment = comment;
+    });
+    result;
+  };
+
   // Shared part
 
   func sharedReputationDistrube() : async Types.Result<Text, Types.TransferBurnError> {
