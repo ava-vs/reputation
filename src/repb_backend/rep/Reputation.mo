@@ -1,9 +1,10 @@
 import Ledger "canister:ledger";
+import RatingLedger "canister:rating_ledger";
 
 import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import Buffer "mo:base/Buffer";
-import Cycles "mo:base/ExperimentalCycles";
+// import Cycles "mo:base/ExperimentalCycles";
 import Hash "mo:base/Hash";
 import Map "mo:base/HashMap";
 import HashMap "mo:base/HashMap";
@@ -134,6 +135,8 @@ actor {
 
   stable var doctokenDeployers : Set<Principal> = Trie.empty<Principal, ()>();
 
+  var userAwards = HashMap.HashMap<Principal, Types.UserReputationAwards>(0, Principal.equal, Principal.hash);
+
   public func initDoctokenDeployerReputation(userId : Principal, subaccount : ?Types.Subaccount) : async () {
     let res = await awardToken({ owner = userId; subaccount = subaccount }, default_doctoken_deployer_reputation);
     doctokenDeployers := Trie.put(doctokenDeployers, _keyFromPrincipal(userId), Principal.equal, ()).0;
@@ -188,7 +191,7 @@ actor {
     // Pad with zeros if encoded text is too short
     if (bytes.size() < 32) {
       let padding = Array.freeze(Array.init<Nat8>((32 - bytes.size()), 0 : Nat8));
-      bytes := Array.append(bytes, padding);
+      bytes := Utils.appendArray(bytes, padding);
     };
     let subaccount = Blob.fromArray(bytes);
     ciferSubaccount.put(cifer, subaccount);
@@ -430,8 +433,8 @@ actor {
     comment : ?Text;
     metadata : ?[(Text, Types.Metadata)];
   }) : async Types.Result<Nat, Text> {
-    let amount = Cycles.available();
-    ignore Cycles.accept(amount);
+    // let amount = Cycles.available();
+    // ignore Cycles.accept(amount);
 
     // Only whitelisted canisters allow
     if (not (await isUserInWhitelist(caller))) return #Err("Unauthorized");
@@ -509,7 +512,21 @@ actor {
     value : Nat8;
     comment : Text;
   }) : async Types.Result<DocHistory, Types.CommonError> {
-    logger.append([prefix # " Method updateDocHistory starts, checking document"]);
+    let category = doc.categories[0];
+    let reviewerReputation = await getReputationByCategory(reviewer, category);
+    let reputationAwarded = Nat8.toNat(value);
+
+    switch (reviewerReputation) {
+      case (?rep) {
+        let awardedIn24Hours = await getTodayAwardedReputation(reviewer, category);
+        if (awardedIn24Hours + reputationAwarded > rep.1) {
+          return #Err(#DailyLimitReached);
+        };
+      };
+      case (_) {
+        return #Err(#NotFound { message = "Reviewer does not have this category: " # category; docId = doc.tokenId });
+      };
+    };
 
     let newDocHistory : DocHistory = {
       docId = doc.tokenId;
@@ -519,20 +536,57 @@ actor {
       comment = comment;
     };
 
-    docHistory.put(doc.tokenId, Array.append(Option.get(docHistory.get(doc.tokenId), []), [newDocHistory]));
-    // logger.append([prefix # " updateDocHistory: checking tags"]);
-
-    let category = doc.categories[0];
-    // logger.append([prefix # " updateDocHistory: branch found by tag " # doc.categories[0] # " is " # category # " for user " # Principal.toText(user) # " with value " # Nat8.toText(value) # " and comment " # comment]);
+    docHistory.put(doc.tokenId, Utils.appendArray(Option.get(docHistory.get(doc.tokenId), []), [newDocHistory]));
 
     let res = await setUserReputation(reviewer, user, category, Nat8.toNat(value));
     switch (res) {
       case (#Ok(account, value)) {
-        logger.append([prefix # " updateDocHistory: setUserReputation result: account= " # Principal.toText(account.owner) # ", subaccount= " # Nat.toText(value)]);
+        // Update user reputation awards
+        let now = Time.now();
+        switch (userAwards.get(reviewer)) {
+          case (?item) {
+            if (item.category == category) {
+              // If record exists and category matches, add new award
+              let newAward : Types.ReputationAward = {
+                amount = reputationAwarded;
+                timestamp = now;
+              };
+              let updatedAwards = Utils.appendArray(item.awards, [newAward]);
+              let updatedItem : Types.UserReputationAwards = {
+                reviewer = item.reviewer;
+                category = item.category;
+                awards = updatedAwards;
+              };
+              userAwards.put(reviewer, updatedItem);
+            } else {
+              // If record exists but category doesn't match, create a new record
+              let newItem : Types.UserReputationAwards = {
+                reviewer = reviewer;
+                category = category;
+                awards = [{
+                  amount = reputationAwarded;
+                  timestamp = now;
+                }];
+              };
+              userAwards.put(reviewer, newItem);
+            };
+          };
+          case (_) {
+            // If record doesn't exist, create a new one
+            let newItem : Types.UserReputationAwards = {
+              reviewer = reviewer;
+              category = category;
+              awards = [{
+                amount = reputationAwarded;
+                timestamp = now;
+              }];
+            };
+            userAwards.put(reviewer, newItem);
+          };
+        };
         #Ok(newDocHistory);
       };
       case (#Err(err)) {
-        logger.append([prefix # " updateDocHistory: setUserReputation result: error"]);
         #Err(#TemporarilyUnavailable);
       };
     };
@@ -729,12 +783,12 @@ actor {
   };
 
   public func getUserBalance(userAlias : Principal) : async Nat {
-    let user = _aliasHandler(userAlias);
+    let user = _resolveUserAlias(userAlias);
     await Ledger.icrc1_balance_by_principal({ owner = user; subaccount = null });
   };
 
   // Check aliases and Replace to real user principal
-  func _aliasHandler(user : Principal) : Principal {
+  func _resolveUserAlias(user : Principal) : Principal {
     let existingAliasValue = aliases.get(Principal.toText(user));
     switch (existingAliasValue) {
       case (?value) Principal.fromText(value);
@@ -748,7 +802,7 @@ actor {
       case (null) { [] };
       case (?s) { Blob.toArray(s) };
     };
-    let registerUser = _aliasHandler(userAlias);
+    let registerUser = _resolveUserAlias(userAlias);
     let addSub : Ledger.Account = {
       owner = registerUser;
       subaccount = ?ledger_subaccount;
@@ -785,7 +839,7 @@ actor {
       case (null) { [] };
       case (?s) { Blob.toArray(s) };
     };
-    let registerUser = _aliasHandler(to.owner);
+    let registerUser = _resolveUserAlias(to.owner);
     let acc : Ledger.Account = {
       owner = registerUser;
       subaccount = ?ledger_subaccount;
@@ -794,7 +848,7 @@ actor {
     logger.append([prefix # " awardToken: with args: " # Principal.toText(acc.owner) # ", amount = " # Nat.toText(amount)]);
     let pre_mint_account = await getMintingAccountPrincipal();
 
-    Cycles.add(default_award_fee);
+    // Cycles.add(default_award_fee);
     let res = await Ledger.icrc2_transfer_from({
       from = { owner = pre_mint_account; subaccount = null };
       to = acc;
@@ -821,7 +875,7 @@ actor {
     let created_at_time : ?Ledger.Timestamp = ?Nat64.fromIntWrap(Time.now());
     let a : Ledger.Tokens = amount;
     let pre_mint_account = await getMintingAccountPrincipal();
-    let registerUser = _aliasHandler(from);
+    let registerUser = _resolveUserAlias(from);
     let res = await Ledger.icrc2_transfer_from({
       from = { owner = registerUser; subaccount = sender };
       to = { owner = pre_mint_account; subaccount = null };
@@ -894,14 +948,19 @@ actor {
   // Value is the user's text identifier from the check.ava.capetown website.
   var aliases : HashMap.HashMap<Text, Text> = HashMap.HashMap<Text, Text>(0, Text.equal, Text.hash);
 
-  public shared ({ caller }) func addAlias(alias : Text) : async Text {
+  public shared ({ caller }) func addAlias(alias : Text) : async (Text, Text) {
     let textCaller = Principal.toText(caller);
-    // Only existing users can add an alias to themselves
-    if (aliases.get(textCaller) == null) {
-      return textCaller;
+    // Cannot add existing alias
+    // if (aliases.get(textCaller) == alias) {
+    //   return ("Alias " # alias, "already exists");
+    // };
+    for (user in aliases.keys()) {
+      if (user == alias) {
+        return ("Alias " # alias, "already exists");
+      };
     };
     aliases.put(alias, textCaller);
-    "No such alias";
+    (alias, textCaller);
   };
 
   public func getAlias(user : Text) : async Types.Result<Text, Bool> {
@@ -915,6 +974,10 @@ actor {
     };
   };
 
+  public func getAliases() : async [(Text, Text)] {
+    Iter.toArray(aliases.entries());
+  };
+
   public func removeAlias(user : Text) : async Bool {
     switch (aliases.remove(user)) {
       case (?_) {
@@ -922,6 +985,76 @@ actor {
       };
       case (_) {
         return false;
+      };
+    };
+  };
+
+  // Award rating tokens
+
+  public func awardRatingTokens(user : Principal, category : Text, amount : Nat) : async Types.Result<TxIndex, Types.TransferError> {
+    let subaccount = await getSubaccountByCategory(category);
+    let account : RatingLedger.Account = {
+      owner = user;
+      subaccount = ?Blob.toArray(Option.unwrap(subaccount));
+    };
+    let result = await RatingLedger.icrc1_transfer({
+      from_subaccount = null;
+      to = account;
+      amount = amount;
+      fee = null;
+      memo = null;
+      created_at_time = ?Nat64.fromIntWrap(Time.now());
+    });
+    return result;
+  };
+
+  public func rewardUserForActions(user : Principal, category : Text, reputationAwarded : Nat) : async Types.Result<TxIndex, Types.TransferError> {
+    // Calculate raiting tokens amount based on reputation awarded
+    let ratingTokensAmount = reputationAwarded * 10;
+
+    // Award raiting tokens to the user
+    let result = await awardRatingTokens(user, category, ratingTokensAmount);
+    return result;
+  };
+
+  public func canUserReview(user : Principal, category : Text) : async Bool {
+    let reputation = await getReputationByCategory(user, category);
+    switch (reputation) {
+      case (?rep) {
+        if (rep.1 >= 100) {
+          return true; // User is specialist or expert
+        } else {
+          return false;
+        };
+      };
+      case (_) {
+        return false;
+      };
+    };
+  };
+
+  stable var dailyAwards : [Types.DailyReputationAwards] = [];
+
+  func getTodayAwardedReputation(reviewer : Principal, category : Text) : async Nat {
+    let now = Time.now();
+    let oneDayAgo = now - 24 * 60 * 60 * 1000000000; // 24 hours ago in nanoseconds
+
+    switch (userAwards.get(reviewer)) {
+      case (?item) {
+        if (item.category == category) {
+          var sum = 0;
+          for (award in item.awards.vals()) {
+            if (award.timestamp >= oneDayAgo) {
+              sum += award.amount;
+            };
+          };
+          return sum;
+        } else {
+          return 0;
+        };
+      };
+      case (_) {
+        return 0;
       };
     };
   };
@@ -934,21 +1067,21 @@ actor {
 
   system func preupgrade() {
     for ((tag, branch) in tagCifer.entries()) {
-      tagEntries := Array.append(tagEntries, [(tag, branch)]);
+      tagEntries := Utils.appendArray(tagEntries, [(tag, branch)]);
     };
     for ((user, entry) in userReputation.entries()) {
       var buffer = Buffer.Buffer<(Category, Nat)>(0);
       for ((branch, value) in entry.entries()) {
         buffer.add((branch, value));
       };
-      userReputationArray := Array.append(userReputationArray, [(user, Buffer.toArray(buffer))]);
+      userReputationArray := Utils.appendArray(userReputationArray, [(user, Buffer.toArray(buffer))]);
     };
     for ((docId, entry) in docHistory.entries()) {
       var buffer = Buffer.Buffer<DocHistory>(0);
       for (item in entry.vals()) {
         buffer.add(item);
       };
-      docHistoryArray := Array.append(docHistoryArray, [(docId, Buffer.toArray(buffer))]);
+      docHistoryArray := Utils.appendArray(docHistoryArray, [(docId, Buffer.toArray(buffer))]);
     };
     stableAsias := Iter.toArray(aliases.entries());
   };
@@ -977,6 +1110,58 @@ actor {
   };
 
   // Clearance methods
+  stable var cleanupTimer : ?Nat64 = null;
+
+  func scheduleCleanup() : () {
+    let now = Nat64.fromIntWrap(Time.now());
+    let nextCleanup = now + 3600_000_000_000 * 24; // Schedule next cleanup in 24 hour
+    cleanupTimer := ?nextCleanup;
+  };
+
+  system func timer(setGlobalTimer : Nat64 -> ()) : async () {
+    switch (cleanupTimer) {
+      case (?t) {
+        if (Nat64.fromIntWrap(Time.now()) >= t) {
+          // It's time to run the cleanup
+          cleanupOldAwards();
+          // Schedule the next cleanup
+          scheduleCleanup();
+        };
+      };
+      case (_) {
+        // No cleanup scheduled yet, schedule the first one
+        scheduleCleanup();
+      };
+    };
+
+    switch (cleanupTimer) {
+      case (?t) {
+        setGlobalTimer(t);
+      };
+      case (_) {};
+    };
+  };
+
+  func cleanupOldAwards() : () {
+    let now = Time.now();
+    let oneDayAgo = now - 24 * 60 * 60 * 1000000000; // 24 hours ago in nanoseconds
+
+    for ((reviewer, item) in userAwards.entries()) {
+      let newAwards = Buffer.Buffer<Types.ReputationAward>(item.awards.size());
+      for (award in item.awards.vals()) {
+        if (award.timestamp >= oneDayAgo) {
+          newAwards.add(award);
+        };
+      };
+      let updatedItem : Types.UserReputationAwards = {
+        reviewer = item.reviewer;
+        category = item.category;
+        awards = newAwards.toArray();
+      };
+      userAwards.put(reviewer, updatedItem);
+    };
+  };
+
   public func clearTags() : async Bool {
     tagCifer := TrieMap.TrieMap<Text, Category>(Text.equal, Text.hash);
     true;
