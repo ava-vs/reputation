@@ -2,6 +2,9 @@
   "ledger": {
     "ic": "ajw6q-6qaaa-aaaal-adgna-cai"
   },
+  "rating_ledger": {
+    "ic": "4wpsa-xqaaa-aaaal-qcaha-cai"
+  },
   "rep": {
     "ic": "aoxye-tiaaa-aaaal-adgnq-cai"
   }

@@ -951,9 +951,6 @@ actor {
   public shared ({ caller }) func addAlias(alias : Text) : async (Text, Text) {
     let textCaller = Principal.toText(caller);
     // Cannot add existing alias
-    // if (aliases.get(textCaller) == alias) {
-    //   return ("Alias " # alias, "already exists");
-    // };
     for (user in aliases.keys()) {
       if (user == alias) {
         return ("Alias " # alias, "already exists");
