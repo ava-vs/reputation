@@ -85,6 +85,7 @@ actor {
   let default_doctoken_deployer_reputation = 100;
   let default_award_fee = 100_000_000;
 
+
   let emptyBuffer = Buffer.Buffer<(Principal, [DocId])>(0);
 
   // map docId - docHistory

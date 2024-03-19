@@ -53,8 +53,11 @@ actor class Hub() = Self {
     let rep_canister_id = "aoxye-tiaaa-aaaal-adgnq-cai";
     let default_doctoken_canister_id = "h5x3q-hyaaa-aaaal-adg6q-cai";
     let default_receiver_canister_id = default_doctoken_canister_id;
+
     let default_reputation_fee = 550_000_000;
+
     let default_subscription_fee = 500_000_000_000;
+
     // subscriber : <canisterId , filter>
 
     var eventHub = {
@@ -89,6 +92,7 @@ actor class Hub() = Self {
             return false;
         };
         ignore Cycles.accept(default_subscription_fee);
+
         eventHub.subscribers.put(subscriber.callback, subscriber);
         true;
     };
@@ -99,12 +103,13 @@ actor class Hub() = Self {
 
     public shared ({ caller }) func emitEvent(event : E.Event) : async Types.Result<[(Nat, Nat)], Text> {
         let amount = Cycles.available();
+
         if (amount < default_reputation_fee * 1_000 + 200_000_000_000) {
+
             return #Err("Not enough cycles to emit event");
         };
         ignore Cycles.accept(amount);
-
-        // logger.append([prefix # "Starting method emitEvent"]);
+  
         eventHub.events := Utils.pushIntoArray(event, eventHub.events);
         updateUserCanisterDocMap(event);
         let buffer = Buffer.Buffer<(Nat, Nat)>(0);
