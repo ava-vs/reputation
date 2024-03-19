@@ -13,7 +13,7 @@
             "type": "motoko"
         },
         "rating_ledger": {
-            "main": "Ledger.mo",
+            "main": "RatingLedger.mo",
             "type": "motoko"
         }
     },

@@ -557,6 +557,7 @@ actor {
                 category = item.category;
                 awards = updatedAwards;
               };
+              ignore await rewardUserForActions(reviewer, category, reputationAwarded); // TODO error handling
               userAwards.put(reviewer, updatedItem);
             } else {
               // If record exists but category doesn't match, create a new record
@@ -568,6 +569,7 @@ actor {
                   timestamp = now;
                 }];
               };
+              ignore await rewardUserForActions(reviewer, category, reputationAwarded); // TODO error handling
               userAwards.put(reviewer, newItem);
             };
           };
@@ -581,6 +583,7 @@ actor {
                 timestamp = now;
               }];
             };
+            ignore await rewardUserForActions(reviewer, category, reputationAwarded); // TODO error handling
             userAwards.put(reviewer, newItem);
           };
         };
@@ -953,7 +956,7 @@ actor {
     // Cannot add existing alias
     for (user in aliases.keys()) {
       if (user == alias) {
-        return ("Alias " # alias, "already exists");
+        return ("Alias " # alias, " already exists");
       };
     };
     aliases.put(alias, textCaller);
@@ -988,14 +991,19 @@ actor {
 
   // Award rating tokens
 
-  public func awardRatingTokens(user : Principal, category : Text, amount : Nat) : async Types.Result<TxIndex, Types.TransferError> {
+  func awardRatingTokens(user : Principal, category : Text, amount : Nat) : async Types.Result<TxIndex, Types.TransferFromError> {
     let subaccount = await getSubaccountByCategory(category);
     let account : RatingLedger.Account = {
       owner = user;
       subaccount = ?Blob.toArray(Option.unwrap(subaccount));
     };
-    let result = await RatingLedger.icrc1_transfer({
-      from_subaccount = null;
+    let ratingMintingAccount = await RatingLedger.icrc1_minting_account();
+    let mintingPrincipal = switch (ratingMintingAccount) {
+      case null Principal.fromText("aaaaa-aa");
+      case (?account) account.owner;
+    };
+    let result = await RatingLedger.icrc2_transfer_from({
+      from = { owner = mintingPrincipal; subaccount = null };
       to = account;
       amount = amount;
       fee = null;
@@ -1005,16 +1013,16 @@ actor {
     return result;
   };
 
-  public func rewardUserForActions(user : Principal, category : Text, reputationAwarded : Nat) : async Types.Result<TxIndex, Types.TransferError> {
+  func rewardUserForActions(user : Principal, category : Text, reputationAwarded : Nat) : async Types.Result<TxIndex, Types.TransferFromError> {
     // Calculate raiting tokens amount based on reputation awarded
-    let ratingTokensAmount = reputationAwarded * 10;
+    let ratingTokensAmount = reputationAwarded;
 
     // Award raiting tokens to the user
     let result = await awardRatingTokens(user, category, ratingTokensAmount);
     return result;
   };
 
-  public func canUserReview(user : Principal, category : Text) : async Bool {
+  func canUserReview(user : Principal, category : Text) : async Bool {
     let reputation = await getReputationByCategory(user, category);
     switch (reputation) {
       case (?rep) {
