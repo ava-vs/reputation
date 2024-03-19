@@ -2,13 +2,18 @@
     "canisters": {
         "rep": {
             "dependencies": [
-                "ledger"
+                "ledger",
+                "rating_ledger"
             ],
             "main": "Reputation.mo",
             "type": "motoko"
         },
         "ledger": {
             "main": "Ledger.mo",
+            "type": "motoko"
+        },
+        "rating_ledger": {
+            "main": "RatingLedger.mo",
             "type": "motoko"
         }
     },

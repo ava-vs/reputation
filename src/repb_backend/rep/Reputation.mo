@@ -1,9 +1,10 @@
 import Ledger "canister:ledger";
+import RatingLedger "canister:rating_ledger";
 
 import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import Buffer "mo:base/Buffer";
-import Cycles "mo:base/ExperimentalCycles";
+// import Cycles "mo:base/ExperimentalCycles";
 import Hash "mo:base/Hash";
 import Map "mo:base/HashMap";
 import HashMap "mo:base/HashMap";
@@ -76,22 +77,16 @@ actor {
   stable var state : Logger.State<Text> = Logger.new<Text>(0, null);
   let logger = Logger.Logger<Text>(state);
   var prefix = Utils.timestampToDate();
-  // let hashBranch = func(x : Branch) : Nat32 {
-  //   return Nat32.fromNat(Nat8.toNat(x * 7));
-  // };
 
   // Cosntants
   let ic_rep_ledger = "ajw6q-6qaaa-aaaal-adgna-cai";
   let default_hub_canister = Principal.fromText("a3qjj-saaaa-aaaal-adgoa-cai");
-  let default_minting_account = Principal.fromText("bs3e6-4i343-voosn-wogd7-6kbdg-mctak-hn3ws-k7q7f-fye2e-uqeyh-yae");
+  let default_minting_account = Principal.fromText("oa7ab-4elxo-r5ooc-a23ga-lheml-we4wg-z5iuo-ery2n-57uyv-u234p-pae");
   let default_doctoken_deployer_reputation = 100;
   let default_award_fee = 100_000_000;
 
 
   let emptyBuffer = Buffer.Buffer<(Principal, [DocId])>(0);
-  // TODO Stable cache might not be a good idea
-  stable var userDocuments : [(Principal, [DocId])] = Buffer.toArray(emptyBuffer);
-  var userDocumentMap = Map.HashMap<Principal, [DocId]>(10, Principal.equal, Principal.hash);
 
   // map docId - docHistory
   var docHistory = Map.HashMap<DocId, [DocHistory]>(10, Nat.equal, Hash.hash);
@@ -106,11 +101,11 @@ actor {
 
   let expertMap = Map.HashMap<Principal, [(Category, Nat)]>(1, Principal.equal, Principal.hash); // Key: user, value: [(Category, Balance)]
 
-  // Whitelist
   private func _keyFromPrincipal(p : Principal) : Key<Principal> {
     { hash = Principal.hash(p); key = p };
   };
 
+  // Whitelist (Allowlist)
   private func initWhitelist() : Set<Principal> {
     let emptyTrie = Trie.empty<Principal, ()>();
     let trieWithFirstKey = Trie.put(emptyTrie, _keyFromPrincipal(default_hub_canister), Principal.equal, ()).0;
@@ -140,6 +135,8 @@ actor {
   // Init reputation for new Doctoken deployers
 
   stable var doctokenDeployers : Set<Principal> = Trie.empty<Principal, ()>();
+
+  var userAwards = HashMap.HashMap<Principal, Types.UserReputationAwards>(0, Principal.equal, Principal.hash);
 
   public func initDoctokenDeployerReputation(userId : Principal, subaccount : ?Types.Subaccount) : async () {
     let res = await awardToken({ owner = userId; subaccount = subaccount }, default_doctoken_deployer_reputation);
@@ -195,7 +192,7 @@ actor {
     // Pad with zeros if encoded text is too short
     if (bytes.size() < 32) {
       let padding = Array.freeze(Array.init<Nat8>((32 - bytes.size()), 0 : Nat8));
-      bytes := Array.append(bytes, padding);
+      bytes := Utils.appendArray(bytes, padding);
     };
     let subaccount = Blob.fromArray(bytes);
     ciferSubaccount.put(cifer, subaccount);
@@ -270,6 +267,7 @@ actor {
       case (?spec) {
         let updatedCategory = Utils.pushIntoArray<(Category, Nat)>((category, bal), spec);
         specialistMap.put(user, updatedCategory);
+        logger.append([prefix # " updateSpecialistMap: user " # Principal.toText(user) # " was added to specialistMap"]);
       };
     };
   };
@@ -345,6 +343,58 @@ actor {
     (category, value);
   };
 
+  // Increase reputation to another participant
+  public shared ({ caller }) func increaseReputation({
+    user : Principal;
+    source : (Text, Nat); // (doctoken_canisterId, documentId)
+    raised_category : Text;
+    value : Nat8;
+    comment : Text;
+  }) : async Types.Result<DocHistory, Types.CommonError> {
+    // check document
+    let doc : Document = switch (await checkDocument(source.0, source.1)) {
+      case (#Err(err)) {
+        logger.append([prefix # " increaseReputation: document check failed"]);
+        return #Err(err);
+      };
+      case (#Ok(document)) {
+        logger.append([prefix # " increaseReputation: document №" # Nat.toText(document.tokenId) # "ok"]);
+        document;
+      };
+    };
+    // check category
+    if (
+      not Option.isSome(
+        Array.find(
+          doc.categories,
+          func(item : Text) : Bool {
+            return item == raised_category;
+          },
+        )
+      )
+    ) {
+      return #Err(#NotFound { message = "Category " # raised_category # " not found in document"; docId = source.1 });
+    };
+    // check for the balance of the caller
+    let reviwer_balance = await getUserBalance(caller);
+    if (reviwer_balance <= 100) return #Err(#InsufficientFunds { balance = reviwer_balance });
+
+    // check for the balance of the user
+    let user_balance = await getUserBalance(user);
+
+    // only if user balance is less than reviewer balance allow to increase reputation
+    if (reviwer_balance <= user_balance) return #Err(#InsufficientFunds { balance = reviwer_balance });
+    // TODO check day limit for reputation increase by one user
+    let result = await updateDocHistory({
+      reviewer = caller;
+      user = user;
+      doc = doc;
+      value = value;
+      comment = comment;
+    });
+    result;
+  };
+
   // Shared part
 
   func sharedReputationDistrube() : async Types.Result<Text, Types.TransferBurnError> {
@@ -384,8 +434,8 @@ actor {
     comment : ?Text;
     metadata : ?[(Text, Types.Metadata)];
   }) : async Types.Result<Nat, Text> {
-    let amount = Cycles.available();
-    ignore Cycles.accept(amount);
+    // let amount = Cycles.available();
+    // ignore Cycles.accept(amount);
 
     // Only whitelisted canisters allow
     if (not (await isUserInWhitelist(caller))) return #Err("Unauthorized");
@@ -399,9 +449,9 @@ actor {
             logger.append([prefix # " eventHandler: document check failed"]);
             return #Err("Error: document check failed");
           };
-          case (#Ok(doc)) {
-            logger.append([prefix # " eventHandler: document ok"]);
-            doc;
+          case (#Ok(document)) {
+            logger.append([prefix # " eventHandler: document №" # Nat.toText(document.tokenId) # "ok"]);
+            document;
           };
         };
         let final_comment = switch (comment) {
@@ -422,9 +472,11 @@ actor {
           };
           case (?rep) {};
         };
-        let userReputation = await getUserReputation(user);
-        let reviewerReputation = await getUserReputation(r);
-        if (userReputation >= reviewerReputation) return #Err("Insufficient Reputation, balance = " # Nat.toText(reviewerReputation) # ", user reputation = " # Nat.toText(userReputation));
+
+        // TODO Reputation balance check
+        // let userReputation = await getUserReputation(user);
+        // let reviewerReputation = await getUserReputation(r);
+        // if (userReputation >= reviewerReputation) return #Err("Insufficient Reputation, balance = " # Nat.toText(reviewerReputation) # ", user reputation = " # Nat.toText(userReputation));
 
         let result = await updateDocHistory({
           reviewer = r;
@@ -461,7 +513,21 @@ actor {
     value : Nat8;
     comment : Text;
   }) : async Types.Result<DocHistory, Types.CommonError> {
-    logger.append([prefix # " Method updateDocHistory starts, checking document"]);
+    let category = doc.categories[0];
+    let reviewerReputation = await getReputationByCategory(reviewer, category);
+    let reputationAwarded = Nat8.toNat(value);
+
+    switch (reviewerReputation) {
+      case (?rep) {
+        let awardedIn24Hours = await getTodayAwardedReputation(reviewer, category);
+        if (awardedIn24Hours + reputationAwarded > rep.1) {
+          return #Err(#DailyLimitReached);
+        };
+      };
+      case (_) {
+        return #Err(#NotFound { message = "Reviewer does not have this category: " # category; docId = doc.tokenId });
+      };
+    };
 
     let newDocHistory : DocHistory = {
       docId = doc.tokenId;
@@ -471,20 +537,60 @@ actor {
       comment = comment;
     };
 
-    docHistory.put(doc.tokenId, Array.append(Option.get(docHistory.get(doc.tokenId), []), [newDocHistory]));
-    // logger.append([prefix # " updateDocHistory: checking tags"]);
-
-    let category = doc.categories[0];
-    // logger.append([prefix # " updateDocHistory: branch found by tag " # doc.categories[0] # " is " # category # " for user " # Principal.toText(user) # " with value " # Nat8.toText(value) # " and comment " # comment]);
+    docHistory.put(doc.tokenId, Utils.appendArray(Option.get(docHistory.get(doc.tokenId), []), [newDocHistory]));
 
     let res = await setUserReputation(reviewer, user, category, Nat8.toNat(value));
     switch (res) {
       case (#Ok(account, value)) {
-        logger.append([prefix # " updateDocHistory: setUserReputation result: account= " # Principal.toText(account.owner) # ", subaccount= " # Nat.toText(value)]);
+        // Update user reputation awards
+        let now = Time.now();
+        switch (userAwards.get(reviewer)) {
+          case (?item) {
+            if (item.category == category) {
+              // If record exists and category matches, add new award
+              let newAward : Types.ReputationAward = {
+                amount = reputationAwarded;
+                timestamp = now;
+              };
+              let updatedAwards = Utils.appendArray(item.awards, [newAward]);
+              let updatedItem : Types.UserReputationAwards = {
+                reviewer = item.reviewer;
+                category = item.category;
+                awards = updatedAwards;
+              };
+              ignore await rewardUserForActions(reviewer, category, reputationAwarded); // TODO error handling
+              userAwards.put(reviewer, updatedItem);
+            } else {
+              // If record exists but category doesn't match, create a new record
+              let newItem : Types.UserReputationAwards = {
+                reviewer = reviewer;
+                category = category;
+                awards = [{
+                  amount = reputationAwarded;
+                  timestamp = now;
+                }];
+              };
+              ignore await rewardUserForActions(reviewer, category, reputationAwarded); // TODO error handling
+              userAwards.put(reviewer, newItem);
+            };
+          };
+          case (_) {
+            // If record doesn't exist, create a new one
+            let newItem : Types.UserReputationAwards = {
+              reviewer = reviewer;
+              category = category;
+              awards = [{
+                amount = reputationAwarded;
+                timestamp = now;
+              }];
+            };
+            ignore await rewardUserForActions(reviewer, category, reputationAwarded); // TODO error handling
+            userAwards.put(reviewer, newItem);
+          };
+        };
         #Ok(newDocHistory);
       };
       case (#Err(err)) {
-        logger.append([prefix # " updateDocHistory: setUserReputation result: error"]);
         #Err(#TemporarilyUnavailable);
       };
     };
@@ -680,18 +786,29 @@ actor {
     Buffer.toArray(res);
   };
 
-  public func getUserBalance(user : Principal) : async Nat {
+  public func getUserBalance(userAlias : Principal) : async Nat {
+    let user = _resolveUserAlias(userAlias);
     await Ledger.icrc1_balance_by_principal({ owner = user; subaccount = null });
   };
 
-  public func userBalanceByCategory(user : Principal, category : Text) : async Nat {
+  // Check aliases and Replace to real user principal
+  func _resolveUserAlias(user : Principal) : Principal {
+    let existingAliasValue = aliases.get(Principal.toText(user));
+    switch (existingAliasValue) {
+      case (?value) Principal.fromText(value);
+      case (null) user;
+    };
+  };
+
+  public func userBalanceByCategory(userAlias : Principal, category : Text) : async Nat {
     let sub : ?Blob = await getSubaccountByCategory(category);
     let ledger_subaccount : Ledger.Subaccount = switch (sub) {
       case (null) { [] };
       case (?s) { Blob.toArray(s) };
     };
+    let registerUser = _resolveUserAlias(userAlias);
     let addSub : Ledger.Account = {
-      owner = user;
+      owner = registerUser;
       subaccount = ?ledger_subaccount;
     };
     await Ledger.icrc1_balance_of(addSub);
@@ -726,16 +843,16 @@ actor {
       case (null) { [] };
       case (?s) { Blob.toArray(s) };
     };
-
+    let registerUser = _resolveUserAlias(to.owner);
     let acc : Ledger.Account = {
-      owner = to.owner;
+      owner = registerUser;
       subaccount = ?ledger_subaccount;
     };
     logger.append([prefix # " Method awardToken: calling method Ledger.icrc2_transfer_from \n"]);
     logger.append([prefix # " awardToken: with args: " # Principal.toText(acc.owner) # ", amount = " # Nat.toText(amount)]);
     let pre_mint_account = await getMintingAccountPrincipal();
 
-    Cycles.add(default_award_fee);
+    // Cycles.add(default_award_fee);
     let res = await Ledger.icrc2_transfer_from({
       from = { owner = pre_mint_account; subaccount = null };
       to = acc;
@@ -747,29 +864,6 @@ actor {
     // logger.append([prefix # " Method awardToken: Ledger.icrc2_transfer_from result was received"]);
     res;
   };
-
-  // func sendToken(
-  //   from : Ledger.Account,
-  //   to : Ledger.Account,
-  //   amount : Ledger.Tokens,
-  // ) : async Types.Result<TxIndex, Types.TransferFromError> {
-  //   let sender : ?Ledger.Subaccount = from.subaccount;
-  //   let memo : ?Ledger.Memo = null;
-  //   let fee : ?Ledger.Tokens = null;
-  //   let created_at_time : ?Ledger.Timestamp = ?Nat64.fromIntWrap(Time.now());
-  //   let a : Ledger.Tokens = amount;
-  //   let acc : Ledger.Account = to;
-  //   let res = await Ledger.icrc2_transfer_from({
-  //     from = from;
-  //     to = to;
-  //     amount = amount;
-  //     fee = fee;
-  //     memo = memo;
-  //     created_at_time = created_at_time;
-  //   });
-  //   ignore await awardIncenitive(from, 1);
-  //   res;
-  // };
 
   // Decrease reputation
   public shared ({ caller }) func burnReputation({
@@ -785,8 +879,9 @@ actor {
     let created_at_time : ?Ledger.Timestamp = ?Nat64.fromIntWrap(Time.now());
     let a : Ledger.Tokens = amount;
     let pre_mint_account = await getMintingAccountPrincipal();
+    let registerUser = _resolveUserAlias(from);
     let res = await Ledger.icrc2_transfer_from({
-      from = { owner = from; subaccount = sender };
+      from = { owner = registerUser; subaccount = sender };
       to = { owner = pre_mint_account; subaccount = null };
       amount = amount;
       fee = fee;
@@ -847,32 +942,154 @@ actor {
 
   // Scheduler part
   // public func distributeTokens(user: Principal, branch : Nat8, value : Nat) : async Result<Bool, TransferFromError> {
-  //   sendToken
+  //   TODO handle quantity of tokens for distribution daily
   // };
   // };
+
+  // Aliases
+
+  // Alias to use as key is the text identifier from Internet Identity.
+  // Value is the user's text identifier from the check.ava.capetown website.
+  var aliases : HashMap.HashMap<Text, Text> = HashMap.HashMap<Text, Text>(0, Text.equal, Text.hash);
+
+  public shared ({ caller }) func addAlias(alias : Text) : async (Text, Text) {
+    let textCaller = Principal.toText(caller);
+    // Cannot add existing alias
+    for (user in aliases.keys()) {
+      if (user == alias) {
+        return ("Alias " # alias, " already exists");
+      };
+    };
+    aliases.put(alias, textCaller);
+    (alias, textCaller);
+  };
+
+  public func getAlias(user : Text) : async Types.Result<Text, Bool> {
+    switch (aliases.get(user)) {
+      case (?alias) {
+        return #Ok(alias);
+      };
+      case (_) {
+        return #Err(false);
+      };
+    };
+  };
+
+  public func getAliases() : async [(Text, Text)] {
+    Iter.toArray(aliases.entries());
+  };
+
+  public func removeAlias(user : Text) : async Bool {
+    switch (aliases.remove(user)) {
+      case (?_) {
+        return true;
+      };
+      case (_) {
+        return false;
+      };
+    };
+  };
+
+  // Award rating tokens
+
+  func awardRatingTokens(user : Principal, category : Text, amount : Nat) : async Types.Result<TxIndex, Types.TransferFromError> {
+    let subaccount = await getSubaccountByCategory(category);
+    let account : RatingLedger.Account = {
+      owner = user;
+      subaccount = ?Blob.toArray(Option.unwrap(subaccount));
+    };
+    let ratingMintingAccount = await RatingLedger.icrc1_minting_account();
+    let mintingPrincipal = switch (ratingMintingAccount) {
+      case null Principal.fromText("aaaaa-aa");
+      case (?account) account.owner;
+    };
+    let result = await RatingLedger.icrc2_transfer_from({
+      from = { owner = mintingPrincipal; subaccount = null };
+      to = account;
+      amount = amount;
+      fee = null;
+      memo = null;
+      created_at_time = ?Nat64.fromIntWrap(Time.now());
+    });
+    return result;
+  };
+
+  func rewardUserForActions(user : Principal, category : Text, reputationAwarded : Nat) : async Types.Result<TxIndex, Types.TransferFromError> {
+    // Calculate raiting tokens amount based on reputation awarded
+    let ratingTokensAmount = reputationAwarded;
+
+    // Award raiting tokens to the user
+    let result = await awardRatingTokens(user, category, ratingTokensAmount);
+    return result;
+  };
+
+  func canUserReview(user : Principal, category : Text) : async Bool {
+    let reputation = await getReputationByCategory(user, category);
+    switch (reputation) {
+      case (?rep) {
+        if (rep.1 >= 100) {
+          return true; // User is specialist or expert
+        } else {
+          return false;
+        };
+      };
+      case (_) {
+        return false;
+      };
+    };
+  };
+
+  stable var dailyAwards : [Types.DailyReputationAwards] = [];
+
+  func getTodayAwardedReputation(reviewer : Principal, category : Text) : async Nat {
+    let now = Time.now();
+    let oneDayAgo = now - 24 * 60 * 60 * 1000000000; // 24 hours ago in nanoseconds
+
+    switch (userAwards.get(reviewer)) {
+      case (?item) {
+        if (item.category == category) {
+          var sum = 0;
+          for (award in item.awards.vals()) {
+            if (award.timestamp >= oneDayAgo) {
+              sum += award.amount;
+            };
+          };
+          return sum;
+        } else {
+          return 0;
+        };
+      };
+      case (_) {
+        return 0;
+      };
+    };
+  };
 
   // Stable tags, docHistory and user reputation storage
   stable var tagEntries : [(Category, Text)] = [];
   stable var userReputationArray : [(Principal, [(Category, Nat)])] = [];
   stable var docHistoryArray : [(DocId, [DocHistory])] = [];
+  stable var stableAsias : [(Text, Text)] = [];
+
   system func preupgrade() {
     for ((tag, branch) in tagCifer.entries()) {
-      tagEntries := Array.append(tagEntries, [(tag, branch)]);
+      tagEntries := Utils.appendArray(tagEntries, [(tag, branch)]);
     };
     for ((user, entry) in userReputation.entries()) {
       var buffer = Buffer.Buffer<(Category, Nat)>(0);
       for ((branch, value) in entry.entries()) {
         buffer.add((branch, value));
       };
-      userReputationArray := Array.append(userReputationArray, [(user, Buffer.toArray(buffer))]);
+      userReputationArray := Utils.appendArray(userReputationArray, [(user, Buffer.toArray(buffer))]);
     };
     for ((docId, entry) in docHistory.entries()) {
       var buffer = Buffer.Buffer<DocHistory>(0);
       for (item in entry.vals()) {
         buffer.add(item);
       };
-      docHistoryArray := Array.append(docHistoryArray, [(docId, Buffer.toArray(buffer))]);
+      docHistoryArray := Utils.appendArray(docHistoryArray, [(docId, Buffer.toArray(buffer))]);
     };
+    stableAsias := Iter.toArray(aliases.entries());
   };
 
   system func postupgrade() {
@@ -892,9 +1109,65 @@ actor {
       docHistory.put(docId, entry);
     };
     docHistoryArray := [];
+    for ((user, alias) in stableAsias.vals()) {
+      aliases.put(user, alias);
+    };
+    stableAsias := [];
   };
 
   // Clearance methods
+  stable var cleanupTimer : ?Nat64 = null;
+
+  func scheduleCleanup() : () {
+    let now = Nat64.fromIntWrap(Time.now());
+    let nextCleanup = now + 3600_000_000_000 * 24; // Schedule next cleanup in 24 hour
+    cleanupTimer := ?nextCleanup;
+  };
+
+  system func timer(setGlobalTimer : Nat64 -> ()) : async () {
+    switch (cleanupTimer) {
+      case (?t) {
+        if (Nat64.fromIntWrap(Time.now()) >= t) {
+          // It's time to run the cleanup
+          cleanupOldAwards();
+          // Schedule the next cleanup
+          scheduleCleanup();
+        };
+      };
+      case (_) {
+        // No cleanup scheduled yet, schedule the first one
+        scheduleCleanup();
+      };
+    };
+
+    switch (cleanupTimer) {
+      case (?t) {
+        setGlobalTimer(t);
+      };
+      case (_) {};
+    };
+  };
+
+  func cleanupOldAwards() : () {
+    let now = Time.now();
+    let oneDayAgo = now - 24 * 60 * 60 * 1000000000; // 24 hours ago in nanoseconds
+
+    for ((reviewer, item) in userAwards.entries()) {
+      let newAwards = Buffer.Buffer<Types.ReputationAward>(item.awards.size());
+      for (award in item.awards.vals()) {
+        if (award.timestamp >= oneDayAgo) {
+          newAwards.add(award);
+        };
+      };
+      let updatedItem : Types.UserReputationAwards = {
+        reviewer = item.reviewer;
+        category = item.category;
+        awards = newAwards.toArray();
+      };
+      userAwards.put(reviewer, updatedItem);
+    };
+  };
+
   public func clearTags() : async Bool {
     tagCifer := TrieMap.TrieMap<Text, Category>(Text.equal, Text.hash);
     true;
@@ -920,43 +1193,3 @@ actor {
     true;
   };
 };
-
-/*
-
-    Test updateDocHistory
-
-   public func test2UpdateDocHistory() : async Types.Result<DocHistory, Types.CommonError> {
-    let user = Principal.fromText("aaaaa-aa");
-    let docId = 1;
-    let value : Nat8 = 1;
-    let comment = "Test comment";
-
-    let expectedResult : Types.Result<DocHistory, Types.CommonError> = #Ok({
-      docId = docId;
-      timestamp = Time.now();
-      changedBy = user;
-      value = value;
-      comment = comment;
-    });
-    let result = await updateDocHistory({
-      user = user;
-      docId = docId;
-      value = value;
-      comment = comment;
-    });
-
-    switch (result) {
-      case (#Ok(docHistory)) {
-        if (docHistory.docId == docId) {
-          return expectedResult; //"updateDocHistory test passed";
-        } else {
-          return #Err(#TemporarilyUnavailable); //"updateDocHistory test failed";
-        };
-      };
-      case (#Err(err)) {
-        return #Err(#TemporarilyUnavailable);
-      };
-    };
-  };
-
-*/

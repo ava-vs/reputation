@@ -130,6 +130,7 @@ module {
     #TemporarilyUnavailable;
     #GenericError : { error_code : Nat; message : Text };
     #NotFound : { message : Text; docId : DocId };
+    #DailyLimitReached;
   };
 
   public type TransferError = DeduplicationError or CommonError or {
@@ -157,5 +158,23 @@ module {
     #CategoryAlreadyExists : { category : Category; cifer : Text };
     #CategoryDoesNotExist : { category : Category };
     #WrongCipher : { cifer : Text };
+  };
+
+  public type ReputationAward = {
+    amount : Nat;
+    timestamp : Int;
+  };
+
+  public type UserReputationAwards = {
+    reviewer : Principal;
+    category : Text;
+    awards : [ReputationAward];
+  };
+
+  public type DailyReputationAwards = {
+    reviewer : Principal;
+    category : Text;
+    totalAwarded : Nat;
+    lastAwardedDate : Int;
   };
 };
